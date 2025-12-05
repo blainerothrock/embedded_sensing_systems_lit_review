@@ -1,0 +1,13 @@
+[project]
+name = "lit-review"
+version = "0.1.0"
+description = "Literature review tool for thesis research"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "bibtexparser>=1.4.3",
+    "textual>=6.7.1",
+]
+
+[project.scripts]
+lit-review = "app:main"
