@@ -52,6 +52,8 @@ class Document:
     notes: str | None = None
     domain: str | None = None
     reference: bool | None = None
+    # Duplicate tracking
+    duplicate_group_id: int | None = None
 
 
 def get_connection() -> sqlite3.Connection:
@@ -85,10 +87,17 @@ def get_documents_for_search(search_id: int) -> list[Document]:
     """Get all documents for a search."""
     conn = get_connection()
     cursor = conn.cursor()
+    # Use subquery to find review for duplicate groups
+    # For documents in a duplicate group, find the review from any document in the group
     cursor.execute("""
         SELECT
             d.id, d.bibtex_key, d.entry_type, d.title, d.doi, d.url, d.search_id,
-            r.id as review_id, r.included, r.notes, r.domain, r.reference,
+            d.duplicate_group_id,
+            COALESCE(r.id, group_review.id) as review_id,
+            COALESCE(r.included, group_review.included) as included,
+            COALESCE(r.notes, group_review.notes) as notes,
+            COALESCE(r.domain, group_review.domain) as domain,
+            COALESCE(r.reference, group_review.reference) as reference,
             COALESCE(a.author, i.author, ib.author) as author,
             COALESCE(a.year, i.year, ib.year) as year,
             COALESCE(a.abstract, i.abstract, ib.abstract) as abstract,
@@ -97,6 +106,12 @@ def get_documents_for_search(search_id: int) -> list[Document]:
             COALESCE(i.booktitle, ib.booktitle) as booktitle
         FROM document d
         LEFT JOIN review r ON r.document_id = d.id
+        LEFT JOIN (
+            SELECT r2.*, d2.duplicate_group_id as dup_group_id
+            FROM review r2
+            JOIN document d2 ON r2.document_id = d2.id
+            WHERE d2.duplicate_group_id IS NOT NULL
+        ) group_review ON d.duplicate_group_id = group_review.dup_group_id AND r.id IS NULL
         LEFT JOIN article a ON a.document_id = d.id
         LEFT JOIN inproceedings i ON i.document_id = d.id
         LEFT JOIN inbook ib ON ib.document_id = d.id
@@ -125,9 +140,109 @@ def get_documents_for_search(search_id: int) -> list[Document]:
             notes=row["notes"],
             domain=row["domain"],
             reference=row["reference"] if row["reference"] is None else bool(row["reference"]),
+            duplicate_group_id=row["duplicate_group_id"],
         ))
     conn.close()
     return documents
+
+
+def get_all_documents() -> list[Document]:
+    """Get all documents across all searches."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    # Use subquery to find review for duplicate groups
+    cursor.execute("""
+        SELECT
+            d.id, d.bibtex_key, d.entry_type, d.title, d.doi, d.url, d.search_id,
+            d.duplicate_group_id,
+            s.source as search_source,
+            COALESCE(r.id, group_review.id) as review_id,
+            COALESCE(r.included, group_review.included) as included,
+            COALESCE(r.notes, group_review.notes) as notes,
+            COALESCE(r.domain, group_review.domain) as domain,
+            COALESCE(r.reference, group_review.reference) as reference,
+            COALESCE(a.author, i.author, ib.author) as author,
+            COALESCE(a.year, i.year, ib.year) as year,
+            COALESCE(a.abstract, i.abstract, ib.abstract) as abstract,
+            COALESCE(a.keywords, i.keywords, ib.keywords) as keywords,
+            a.journal,
+            COALESCE(i.booktitle, ib.booktitle) as booktitle
+        FROM document d
+        JOIN search s ON d.search_id = s.id
+        LEFT JOIN review r ON r.document_id = d.id
+        LEFT JOIN (
+            SELECT r2.*, d2.duplicate_group_id as dup_group_id
+            FROM review r2
+            JOIN document d2 ON r2.document_id = d2.id
+            WHERE d2.duplicate_group_id IS NOT NULL
+        ) group_review ON d.duplicate_group_id = group_review.dup_group_id AND r.id IS NULL
+        LEFT JOIN article a ON a.document_id = d.id
+        LEFT JOIN inproceedings i ON i.document_id = d.id
+        LEFT JOIN inbook ib ON ib.document_id = d.id
+        ORDER BY d.id
+    """)
+
+    documents = []
+    for row in cursor.fetchall():
+        doc = Document(
+            id=row["id"],
+            bibtex_key=row["bibtex_key"],
+            entry_type=row["entry_type"],
+            title=row["title"],
+            doi=row["doi"],
+            url=row["url"],
+            search_id=row["search_id"],
+            author=row["author"],
+            year=row["year"],
+            abstract=row["abstract"],
+            keywords=row["keywords"],
+            journal=row["journal"],
+            booktitle=row["booktitle"],
+            review_id=row["review_id"],
+            included=row["included"] if row["included"] is None else bool(row["included"]),
+            notes=row["notes"],
+            domain=row["domain"],
+            reference=row["reference"] if row["reference"] is None else bool(row["reference"]),
+            duplicate_group_id=row["duplicate_group_id"],
+        )
+        # Store search source as an extra attribute for filtering
+        doc._search_source = row["search_source"]
+        documents.append(doc)
+    conn.close()
+    return documents
+
+
+def get_all_venues() -> list[str]:
+    """Get all unique venues (journals and booktitles) from the database."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT DISTINCT venue FROM (
+            SELECT journal as venue FROM article WHERE journal IS NOT NULL AND journal != ''
+            UNION
+            SELECT booktitle as venue FROM inproceedings WHERE booktitle IS NOT NULL AND booktitle != ''
+            UNION
+            SELECT booktitle as venue FROM inbook WHERE booktitle IS NOT NULL AND booktitle != ''
+        ) ORDER BY venue
+    """)
+    results = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return results
+
+
+def get_duplicate_searches(doc_id: int, duplicate_group_id: int) -> list[tuple[int, str]]:
+    """Get other documents in the same duplicate group with their search names."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT d.id, s.source
+        FROM document d
+        JOIN search s ON d.search_id = s.id
+        WHERE d.duplicate_group_id = ? AND d.id != ?
+    """, (duplicate_group_id, doc_id))
+    results = [(row["id"], row["source"]) for row in cursor.fetchall()]
+    conn.close()
+    return results
 
 
 def get_exclusion_codes() -> list[tuple[int, str]]:
@@ -411,12 +526,11 @@ class MainMenuScreen(Screen):
 
     @on(Button.Pressed, "#browse-btn")
     def on_browse_pressed(self) -> None:
-        if self.selected_search_id:
-            self.app.push_screen(BrowseScreen(self.selected_search_id))
+        self.app.push_screen(BrowseScreen())
 
 
 class BrowseScreen(Screen):
-    """Screen for browsing and filtering all papers."""
+    """Screen for browsing and filtering all papers across all searches."""
 
     BINDINGS = [
         Binding("q", "go_back", "Back"),
@@ -429,13 +543,13 @@ class BrowseScreen(Screen):
     }
 
     #filter-bar {
-        height: 3;
+        height: auto;
         padding: 0 1;
         background: $surface;
     }
 
-    #filter-bar Horizontal {
-        height: 100%;
+    #filter-row-1, #filter-row-2 {
+        height: 3;
         align: left middle;
     }
 
@@ -445,8 +559,12 @@ class BrowseScreen(Screen):
     }
 
     #filter-bar Select {
-        width: 20;
-        margin-right: 2;
+        width: 18;
+        margin-right: 1;
+    }
+
+    #venue-filter {
+        width: 30;
     }
 
     #papers-table {
@@ -460,71 +578,149 @@ class BrowseScreen(Screen):
     }
     """
 
-    def __init__(self, search_id: int) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self.search_id = search_id
         self.documents: list[Document] = []
+        self.searches: list[tuple[int, str, int, int]] = []
         self.exclusion_codes: list[tuple[int, str]] = []
+        self.venues: list[str] = []
+        # Filter states
         self.current_filter_status: str | None = None
         self.current_filter_code: str | None = None
+        self.current_filter_search: int | None = None
+        self.current_filter_ref: str | None = None
+        self.current_filter_venue: str | None = None
+        self.current_filter_domain: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Horizontal(id="filter-bar"):
-            yield Label("Status:")
-            yield Select(
-                [
-                    ("All", "all"),
-                    ("Pending", "pending"),
-                    ("Included", "included"),
-                    ("Excluded", "excluded"),
-                ],
-                value="all",
-                id="status-filter",
-                allow_blank=False,
-            )
-            yield Label("Exclusion Code:")
-            yield Select(
-                [("All", "all")],
-                value="all",
-                id="code-filter",
-                allow_blank=False,
-            )
+        with Vertical(id="filter-bar"):
+            with Horizontal(id="filter-row-1"):
+                yield Label("Status:")
+                yield Select(
+                    [
+                        ("All", "all"),
+                        ("Pending", "pending"),
+                        ("Included", "included"),
+                        ("Excluded", "excluded"),
+                    ],
+                    value="all",
+                    id="status-filter",
+                    allow_blank=False,
+                )
+                yield Label("Code:")
+                yield Select(
+                    [("All", "all")],
+                    value="all",
+                    id="code-filter",
+                    allow_blank=False,
+                )
+                yield Label("Search:")
+                yield Select(
+                    [("All", "all")],
+                    value="all",
+                    id="search-filter",
+                    allow_blank=False,
+                )
+            with Horizontal(id="filter-row-2"):
+                yield Label("Ref:")
+                yield Select(
+                    [
+                        ("All", "all"),
+                        ("Yes", "yes"),
+                        ("No", "no"),
+                    ],
+                    value="all",
+                    id="ref-filter",
+                    allow_blank=False,
+                )
+                yield Label("Domain:")
+                yield Select(
+                    [
+                        ("All", "all"),
+                        ("Health", "health"),
+                        ("Environmental", "environmental"),
+                        ("None", "none"),
+                    ],
+                    value="all",
+                    id="domain-filter",
+                    allow_blank=False,
+                )
+                yield Label("Venue:")
+                yield Select(
+                    [("All", "all")],
+                    value="all",
+                    id="venue-filter",
+                    allow_blank=False,
+                )
         yield DataTable(id="papers-table")
         yield Static("", id="stats-bar")
         yield Footer()
 
     def on_mount(self) -> None:
-        self.documents = get_documents_for_search(self.search_id)
+        # Load all data
+        self.documents = get_all_documents()
+        self.searches = get_searches()
         self.exclusion_codes = get_exclusion_codes()
+        self.venues = get_all_venues()
 
         # Populate exclusion code filter
         code_filter = self.query_one("#code-filter", Select)
         code_options = [("All", "all")] + [(code, code) for _, code in self.exclusion_codes]
         code_filter.set_options(code_options)
 
+        # Populate search filter
+        search_filter = self.query_one("#search-filter", Select)
+        search_options = [("All", "all")] + [(source, str(sid)) for sid, source, _, _ in self.searches]
+        search_filter.set_options(search_options)
+
+        # Populate venue filter
+        venue_filter = self.query_one("#venue-filter", Select)
+        # Truncate long venue names for display
+        venue_options = [("All", "all")]
+        for venue in self.venues:
+            display = venue if len(venue) <= 40 else venue[:37] + "..."
+            venue_options.append((display, venue))
+        venue_filter.set_options(venue_options)
+
         # Setup table
         table = self.query_one("#papers-table", DataTable)
         table.cursor_type = "row"
-        table.add_columns("Status", "Title", "Year", "Venue", "Codes")
+        table.add_columns("Status", "Title", "Year", "Search", "Venue", "Codes")
 
         self._refresh_table()
 
     def _get_venue(self, doc: Document) -> str:
         """Get venue (journal or booktitle)."""
         venue = doc.journal or doc.booktitle or ""
-        if len(venue) > 40:
-            venue = venue[:37] + "..."
+        if len(venue) > 30:
+            venue = venue[:27] + "..."
         return venue
+
+    def _get_search_source(self, doc: Document) -> str:
+        """Get search source name for document."""
+        # Use the cached _search_source attribute
+        source = getattr(doc, "_search_source", None)
+        if source:
+            if len(source) > 20:
+                return source[:17] + "..."
+            return source
+        return ""
 
     def _get_status_text(self, doc: Document) -> Text:
         """Get styled status text."""
+        status = Text()
+        if doc.duplicate_group_id:
+            status.append("DUP ", style="bold yellow")
+        if doc.reference:
+            status.append("REF ", style="bold blue")
         if doc.included is None:
-            return Text("PENDING", style="yellow")
+            status.append("PENDING", style="yellow")
         elif doc.included:
-            return Text("INCLUDED", style="green")
+            status.append("INCLUDED", style="green")
         else:
-            return Text("EXCLUDED", style="red")
+            status.append("EXCLUDED", style="red")
+        return status
 
     def _get_exclusion_codes_for_doc(self, doc: Document) -> str:
         """Get exclusion codes for a document."""
@@ -555,6 +751,28 @@ class BrowseScreen(Screen):
                         filtered_by_code.append(doc)
             filtered = filtered_by_code
 
+        # Search filter
+        if self.current_filter_search is not None:
+            filtered = [d for d in filtered if d.search_id == self.current_filter_search]
+
+        # Reference filter
+        if self.current_filter_ref == "yes":
+            filtered = [d for d in filtered if d.reference is True]
+        elif self.current_filter_ref == "no":
+            filtered = [d for d in filtered if not d.reference]
+
+        # Domain filter
+        if self.current_filter_domain == "health":
+            filtered = [d for d in filtered if d.domain == "health"]
+        elif self.current_filter_domain == "environmental":
+            filtered = [d for d in filtered if d.domain == "environmental"]
+        elif self.current_filter_domain == "none":
+            filtered = [d for d in filtered if d.domain is None]
+
+        # Venue filter
+        if self.current_filter_venue and self.current_filter_venue != "all":
+            filtered = [d for d in filtered if (d.journal == self.current_filter_venue or d.booktitle == self.current_filter_venue)]
+
         return filtered
 
     def _refresh_table(self) -> None:
@@ -567,13 +785,14 @@ class BrowseScreen(Screen):
         for doc in filtered_docs:
             # Wrap title
             title = doc.title or "No title"
-            if len(title) > 80:
-                title = title[:77] + "..."
+            if len(title) > 60:
+                title = title[:57] + "..."
 
             table.add_row(
                 self._get_status_text(doc),
                 title,
                 doc.year or "",
+                self._get_search_source(doc),
                 self._get_venue(doc),
                 self._get_exclusion_codes_for_doc(doc),
                 key=str(doc.id),
@@ -604,14 +823,46 @@ class BrowseScreen(Screen):
         self.current_filter_code = None if value == "all" else value
         self._refresh_table()
 
+    @on(Select.Changed, "#search-filter")
+    def on_search_filter_changed(self, event: Select.Changed) -> None:
+        value = event.value
+        self.current_filter_search = None if value == "all" else int(value)
+        self._refresh_table()
+
+    @on(Select.Changed, "#ref-filter")
+    def on_ref_filter_changed(self, event: Select.Changed) -> None:
+        value = event.value
+        self.current_filter_ref = None if value == "all" else value
+        self._refresh_table()
+
+    @on(Select.Changed, "#domain-filter")
+    def on_domain_filter_changed(self, event: Select.Changed) -> None:
+        value = event.value
+        self.current_filter_domain = None if value == "all" else value
+        self._refresh_table()
+
+    @on(Select.Changed, "#venue-filter")
+    def on_venue_filter_changed(self, event: Select.Changed) -> None:
+        value = event.value
+        self.current_filter_venue = None if value == "all" else value
+        self._refresh_table()
+
     def action_go_back(self) -> None:
         self.app.pop_screen()
 
     def action_reset_filters(self) -> None:
         self.query_one("#status-filter", Select).value = "all"
         self.query_one("#code-filter", Select).value = "all"
+        self.query_one("#search-filter", Select).value = "all"
+        self.query_one("#ref-filter", Select).value = "all"
+        self.query_one("#domain-filter", Select).value = "all"
+        self.query_one("#venue-filter", Select).value = "all"
         self.current_filter_status = None
         self.current_filter_code = None
+        self.current_filter_search = None
+        self.current_filter_ref = None
+        self.current_filter_domain = None
+        self.current_filter_venue = None
         self._refresh_table()
 
     @on(DataTable.RowSelected, "#papers-table")
@@ -619,7 +870,10 @@ class BrowseScreen(Screen):
         """Open the selected paper in the review screen."""
         if event.row_key and event.row_key.value:
             doc_id = int(event.row_key.value)
-            self.app.push_screen(ReviewScreen(self.search_id, start_doc_id=doc_id))
+            # Find the document to get its search_id
+            doc = next((d for d in self.documents if d.id == doc_id), None)
+            if doc:
+                self.app.push_screen(ReviewScreen(doc.search_id, start_doc_id=doc_id))
 
 
 class ReviewScreen(Screen):
@@ -875,6 +1129,16 @@ class ReviewScreen(Screen):
         parts.append("")
         parts.append("[bold]Bibtex Key[/bold]")
         parts.append(doc.bibtex_key)
+
+        # Show duplicate info
+        if doc.duplicate_group_id:
+            duplicates = get_duplicate_searches(doc.id, doc.duplicate_group_id)
+            if duplicates:
+                parts.append("")
+                parts.append("[bold yellow]DUPLICATE[/bold yellow]")
+                parts.append("Also in:")
+                for _, source in duplicates:
+                    parts.append(f"  - {source}")
 
         sidebar.update("\n\n".join(parts))
 

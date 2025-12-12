@@ -1,0 +1,14 @@
+# Query
+
+```
+Abstract:(DIY AND Sens*)
+```
+
+
+
+# Full Query Syntax
+
+```
+"query": { Abstract:(DIY AND Sens*) }
+"filter": { Article Type: Research Article, E-Publication Date: (01/01/2022 TO *), ACM Content: DL }
+```

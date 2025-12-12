@@ -1,0 +1,14 @@
+# Query
+
+```
+Abstract:(sens* AND low AND cost)
+```
+
+
+
+# Full Query Syntax
+
+```
+"query": { Abstract:(sens* AND low AND cost) }
+"filter": { Article Type: Research Article, E-Publication Date: (01/01/2022 TO *), ACM Content: DL }
+```

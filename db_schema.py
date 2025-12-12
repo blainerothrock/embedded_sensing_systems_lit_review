@@ -19,6 +19,14 @@ def create_schema(conn: sqlite3.Connection) -> None:
         )
     """)
 
+    # Duplicate group table - links papers with same DOI across searches
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS duplicate_group (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            doi TEXT UNIQUE NOT NULL
+        )
+    """)
+
     # Main document reference table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS document (
@@ -29,7 +37,9 @@ def create_schema(conn: sqlite3.Connection) -> None:
             doi TEXT,
             url TEXT,
             search_id INTEGER NOT NULL,
-            FOREIGN KEY (search_id) REFERENCES search(id)
+            duplicate_group_id INTEGER,
+            FOREIGN KEY (search_id) REFERENCES search(id),
+            FOREIGN KEY (duplicate_group_id) REFERENCES duplicate_group(id)
         )
     """)
 
@@ -136,6 +146,61 @@ def create_schema(conn: sqlite3.Connection) -> None:
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_document_search ON document(search_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_document_entry_type ON document(entry_type)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_review_included ON review(included)")
+    # Note: idx_document_duplicate_group and idx_document_doi are created in migration
+
+    conn.commit()
+
+
+def migrate_duplicate_support(conn: sqlite3.Connection) -> None:
+    """Add duplicate_group support to existing database."""
+    cursor = conn.cursor()
+
+    # Check if duplicate_group table exists
+    cursor.execute("""
+        SELECT name FROM sqlite_master
+        WHERE type='table' AND name='duplicate_group'
+    """)
+    if not cursor.fetchone():
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS duplicate_group (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                doi TEXT UNIQUE NOT NULL
+            )
+        """)
+
+    # Check if duplicate_group_id column exists in document
+    cursor.execute("PRAGMA table_info(document)")
+    columns = [row[1] for row in cursor.fetchall()]
+
+    if "duplicate_group_id" not in columns:
+        cursor.execute("""
+            ALTER TABLE document
+            ADD COLUMN duplicate_group_id INTEGER REFERENCES duplicate_group(id)
+        """)
+
+    # Create indexes if they don't exist
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_document_duplicate_group ON document(duplicate_group_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_document_doi ON document(doi)")
+
+    # Backfill: find existing duplicates by DOI and group them
+    cursor.execute("""
+        SELECT doi FROM document
+        WHERE doi IS NOT NULL AND doi != ''
+        GROUP BY doi HAVING COUNT(*) > 1
+    """)
+    duplicate_dois = cursor.fetchall()
+
+    for row in duplicate_dois:
+        doi = row[0]
+        # Create duplicate group
+        cursor.execute("INSERT OR IGNORE INTO duplicate_group (doi) VALUES (?)", (doi,))
+        cursor.execute("SELECT id FROM duplicate_group WHERE doi = ?", (doi,))
+        group_id = cursor.fetchone()[0]
+        # Update all documents with this DOI
+        cursor.execute(
+            "UPDATE document SET duplicate_group_id = ? WHERE doi = ?",
+            (group_id, doi)
+        )
 
     conn.commit()
 
@@ -145,6 +210,7 @@ def init_db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     create_schema(conn)
+    migrate_duplicate_support(conn)
     return conn
 
 

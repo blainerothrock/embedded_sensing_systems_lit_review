@@ -9,9 +9,6 @@ wheels/
 # Virtual environments
 .venv
 
-# Data directories
-acm-extract/
-
 # API specs
 semantic-scholar-api-swagger.json
 
