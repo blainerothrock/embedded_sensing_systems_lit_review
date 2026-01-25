@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+
+{% block title %}Browse Papers - Literature Review{% endblock %}
+
+{% block body %}
+<div class="browse-container">
+    <header class="browse-header">
+        <a href="{{ url_for('index') }}" class="back-btn">&larr;</a>
+        <h1>Browse Papers</h1>
+        <button class="filter-toggle" onclick="toggleFilters()">Filter</button>
+    </header>
+
+    <div class="filters-panel" id="filters-panel">
+        <div class="filter-row">
+            <label>
+                Pass 1
+                <select id="filter-pass1">
+                    <option value="">All</option>
+                    <option value="pending">Pending</option>
+                    <option value="include">Include</option>
+                    <option value="exclude">Exclude</option>
+                    <option value="uncertain">Uncertain</option>
+                </select>
+            </label>
+            <label>
+                Pass 2
+                <select id="filter-pass2">
+                    <option value="">All</option>
+                    <option value="pending">Pending</option>
+                    <option value="include">Include</option>
+                    <option value="exclude">Exclude</option>
+                    <option value="uncertain">Uncertain</option>
+                </select>
+            </label>
+        </div>
+        <div class="filter-row">
+            <label>
+                Search
+                <select id="filter-search">
+                    <option value="">All</option>
+                    {% for search in searches %}
+                    <option value="{{ search.id }}">{{ search.source }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>
+                Code
+                <select id="filter-code">
+                    <option value="">All</option>
+                    {% for code in exclusion_codes %}
+                    <option value="{{ code.code }}">{{ code.code }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+        </div>
+        <button class="btn btn-reset" onclick="resetFilters()">Reset Filters</button>
+    </div>
+
+    <div class="results-info" id="results-info">
+        Loading...
+    </div>
+
+    <div class="paper-list" id="paper-list">
+        <!-- Papers loaded via JS -->
+    </div>
+</div>
+
+<script>
+let allDocuments = [];
+
+async function loadDocuments() {
+    try {
+        const response = await fetch('/api/browse');
+        allDocuments = await response.json();
+        applyFilters();
+    } catch (e) {
+        document.getElementById('paper-list').innerHTML = '<p class="error">Failed to load papers</p>';
+    }
+}
+
+function applyFilters() {
+    const pass1Filter = document.getElementById('filter-pass1').value;
+    const pass2Filter = document.getElementById('filter-pass2').value;
+    const searchFilter = document.getElementById('filter-search').value;
+    const codeFilter = document.getElementById('filter-code').value;
+
+    let filtered = allDocuments.filter(doc => {
+        // Pass 1 filter
+        if (pass1Filter) {
+            if (pass1Filter === 'pending' && doc.pass1 !== null) return false;
+            if (pass1Filter !== 'pending' && doc.pass1 !== pass1Filter) return false;
+        }
+
+        // Pass 2 filter
+        if (pass2Filter) {
+            if (pass2Filter === 'pending' && doc.pass2 !== null) return false;
+            if (pass2Filter !== 'pending' && doc.pass2 !== pass2Filter) return false;
+        }
+
+        // Search filter
+        if (searchFilter && doc.search_id != searchFilter) return false;
+
+        // Code filter
+        if (codeFilter) {
+            const allCodes = [...(doc.pass1_codes || []), ...(doc.pass2_codes || [])];
+            if (!allCodes.includes(codeFilter)) return false;
+        }
+
+        return true;
+    });
+
+    renderPapers(filtered);
+}
+
+function renderPapers(papers) {
+    const list = document.getElementById('paper-list');
+    const info = document.getElementById('results-info');
+
+    info.textContent = `Showing ${papers.length} papers`;
+
+    if (papers.length === 0) {
+        list.innerHTML = '<p class="no-results">No papers match the filters</p>';
+        return;
+    }
+
+    list.innerHTML = papers.map(doc => `
+        <a href="/review/${doc.search_id}?pass=1&doc=${doc.id}" class="paper-card">
+            <div class="paper-badges">
+                <span class="badge badge-${doc.pass1 || 'pending'}">P1: ${formatDecision(doc.pass1)}</span>
+                <span class="badge badge-${doc.pass2 || 'pending'}">P2: ${formatDecision(doc.pass2)}</span>
+            </div>
+            <h3 class="paper-title">${doc.title || 'Untitled'}</h3>
+            <div class="paper-info">
+                <span class="paper-year">${doc.year || '?'}</span>
+                <span class="paper-source">${doc.search_source}</span>
+                ${doc.venue ? `<span class="paper-venue">${truncate(doc.venue, 30)}</span>` : ''}
+            </div>
+        </a>
+    `).join('');
+}
+
+function formatDecision(decision) {
+    if (!decision) return '-';
+    if (decision === 'include') return '+';
+    if (decision === 'exclude') return 'x';
+    if (decision === 'uncertain') return '?';
+    return decision;
+}
+
+function truncate(str, len) {
+    return str.length > len ? str.substring(0, len) + '...' : str;
+}
+
+function toggleFilters() {
+    document.getElementById('filters-panel').classList.toggle('show');
+}
+
+function resetFilters() {
+    document.getElementById('filter-pass1').value = '';
+    document.getElementById('filter-pass2').value = '';
+    document.getElementById('filter-search').value = '';
+    document.getElementById('filter-code').value = '';
+    applyFilters();
+}
+
+// Add event listeners to filters
+['filter-pass1', 'filter-pass2', 'filter-search', 'filter-code'].forEach(id => {
+    document.getElementById(id).addEventListener('change', applyFilters);
+});
+
+// Load documents on page load
+loadDocuments();
+</script>
+{% endblock %}

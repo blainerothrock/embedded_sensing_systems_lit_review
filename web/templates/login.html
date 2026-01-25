@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}Login - Literature Review{% endblock %}
+
+{% block body %}
+<div class="login-container">
+    <h1>Literature Review</h1>
+
+    {% if error %}
+    <div class="error-message">{{ error }}</div>
+    {% endif %}
+
+    <div class="passcode-display">
+        <span id="passcode-dots"></span>
+    </div>
+
+    <div class="keypad">
+        <button class="key" data-key="1">1</button>
+        <button class="key" data-key="2">2</button>
+        <button class="key" data-key="3">3</button>
+        <button class="key" data-key="4">4</button>
+        <button class="key" data-key="5">5</button>
+        <button class="key" data-key="6">6</button>
+        <button class="key" data-key="7">7</button>
+        <button class="key" data-key="8">8</button>
+        <button class="key" data-key="9">9</button>
+        <button class="key key-clear" data-key="clear">Clear</button>
+        <button class="key" data-key="0">0</button>
+        <button class="key key-enter" data-key="enter">Enter</button>
+    </div>
+</div>
+
+<script>
+let passcode = '';
+
+function updateDisplay() {
+    const dots = document.getElementById('passcode-dots');
+    dots.textContent = '*'.repeat(passcode.length);
+}
+
+async function submitPasscode() {
+    if (!passcode) return;
+
+    try {
+        const response = await fetch('/login', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({passcode})
+        });
+        const data = await response.json();
+        if (data.success) {
+            window.location.href = '/';
+        } else {
+            passcode = '';
+            updateDisplay();
+            alert('Invalid passcode');
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+document.querySelectorAll('.key').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const key = btn.dataset.key;
+        if (key === 'clear') {
+            passcode = '';
+        } else if (key === 'enter') {
+            submitPasscode();
+        } else {
+            passcode += key;
+        }
+        updateDisplay();
+    });
+});
+
+// Support physical keyboard
+document.addEventListener('keydown', (e) => {
+    if (e.key >= '0' && e.key <= '9') {
+        passcode += e.key;
+        updateDisplay();
+    } else if (e.key === 'Backspace') {
+        passcode = passcode.slice(0, -1);
+        updateDisplay();
+    } else if (e.key === 'Enter') {
+        submitPasscode();
+    }
+});
+</script>
+{% endblock %}

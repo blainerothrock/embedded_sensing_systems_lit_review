@@ -1,0 +1,281 @@
+{% extends "base.html" %}
+
+{% block title %}Review - {{ search_info.source }} - Pass {{ pass_number }}{% endblock %}
+
+{% block body %}
+<div class="review-container">
+    <header class="review-header">
+        <a href="{{ url_for('index') }}" class="back-btn">&larr;</a>
+        <div class="header-info">
+            <span class="search-name">{{ search_info.source }}</span>
+            <span class="pass-badge">Pass {{ pass_number }}</span>
+        </div>
+        <span class="progress-counter">{{ reviewed_count }}/{{ total_count }}</span>
+    </header>
+
+    <div class="progress-bar-full">
+        <div class="progress-fill" style="width: {{ (reviewed_count / total_count * 100) if total_count > 0 else 0 }}%"></div>
+    </div>
+
+    <main class="review-main" id="review-main" data-doc-id="{{ document.id }}" data-search-id="{{ search_id }}" data-pass="{{ pass_number }}">
+        <article class="paper-content">
+            <h1 class="paper-title">{{ document.title or 'Untitled' }}</h1>
+            <p class="paper-year">{{ document.year or 'Unknown year' }}</p>
+
+            <div class="paper-meta">
+                {% if document.author %}
+                <div class="meta-item">
+                    <span class="meta-label">Authors</span>
+                    <span class="meta-value">{{ document.author }}</span>
+                </div>
+                {% endif %}
+
+                {% if document.journal or document.booktitle %}
+                <div class="meta-item">
+                    <span class="meta-label">Venue</span>
+                    <span class="meta-value">{{ document.journal or document.booktitle }}</span>
+                </div>
+                {% endif %}
+
+                {% if document.keywords %}
+                <div class="meta-item">
+                    <span class="meta-label">Keywords</span>
+                    <span class="meta-value keywords">{{ document.keywords }}</span>
+                </div>
+                {% endif %}
+            </div>
+
+            {% if pass_number == 2 and document.abstract %}
+            <div class="abstract-section">
+                <h2>Abstract</h2>
+                <p class="abstract-text">{{ document.abstract }}</p>
+            </div>
+            {% endif %}
+
+            {% if duplicates %}
+            <div class="duplicate-notice">
+                <strong>Duplicate</strong> - Also in: {{ duplicates|map(attribute='source')|join(', ') }}
+            </div>
+            {% endif %}
+        </article>
+
+        {% if pass_review and pass_review.llm_suggestion %}
+        <div class="llm-panel" id="llm-panel">
+            <button class="llm-toggle" onclick="toggleLlmPanel()">
+                <span>LLM Suggestion</span>
+                <span class="llm-decision llm-{{ pass_review.llm_suggestion.decision }}">
+                    {{ pass_review.llm_suggestion.decision|upper }}
+                    ({{ (pass_review.llm_suggestion.confidence * 100)|int }}%)
+                </span>
+            </button>
+            <div class="llm-content" id="llm-content">
+                <p class="llm-reasoning">{{ pass_review.llm_suggestion.reasoning }}</p>
+
+                {% if pass_review.llm_suggestion.exclusion_codes %}
+                <p class="llm-codes">
+                    <strong>Suggested codes:</strong>
+                    {{ pass_review.llm_suggestion.exclusion_codes|join(', ') }}
+                </p>
+                {% endif %}
+
+                {% if pass_review.llm_suggestion.model %}
+                <p class="llm-meta">Model: {{ pass_review.llm_suggestion.model }}</p>
+                {% endif %}
+
+                <div class="llm-actions">
+                    <button class="btn btn-small btn-accept {% if pass_review.llm_accepted == true %}active{% endif %}" onclick="acceptLlm(true)">Accept</button>
+                    <button class="btn btn-small btn-reject {% if pass_review.llm_accepted == false %}active{% endif %}" onclick="acceptLlm(false)">Reject</button>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="notes-section">
+            <label for="notes">Notes</label>
+            <textarea id="notes" placeholder="Add notes...">{{ pass_review.notes if pass_review else '' }}</textarea>
+        </div>
+
+        {% if pass_review and pass_review.decision %}
+        <div class="current-decision">
+            Current: <span class="decision-badge decision-{{ pass_review.decision }}">{{ pass_review.decision|upper }}</span>
+            {% if pass_review.exclusion_codes %}
+            <span class="exclusion-codes">({{ pass_review.exclusion_codes|join(', ') }})</span>
+            {% endif %}
+        </div>
+        {% endif %}
+    </main>
+
+    <nav class="review-nav">
+        <button class="nav-btn" id="prev-btn" onclick="navigate('prev')">&larr; Prev</button>
+        <button class="nav-btn" id="random-btn" onclick="navigate('random')">Random</button>
+        <button class="nav-btn" id="next-btn" onclick="navigate('next')">Next &rarr;</button>
+    </nav>
+
+    <footer class="decision-buttons">
+        <button class="decision-btn include" onclick="saveDecision('include')">Include</button>
+        <button class="decision-btn exclude" onclick="showExclusionModal()">Exclude</button>
+        <button class="decision-btn uncertain" onclick="saveDecision('uncertain')">?</button>
+    </footer>
+</div>
+
+<!-- Exclusion Code Modal -->
+<div class="modal-overlay" id="exclusion-modal">
+    <div class="modal-content">
+        <h2>Select Exclusion Codes</h2>
+        <div class="exclusion-list">
+            {% for code in exclusion_codes %}
+            <label class="exclusion-item">
+                <input type="checkbox" name="exclusion_code" value="{{ code.code }}"
+                    {% if pass_review and code.code in pass_review.exclusion_codes %}checked{% endif %}>
+                <span class="code-name">{{ code.code }}</span>
+                {% if code.description %}
+                <span class="code-desc">{{ code.description }}</span>
+                {% endif %}
+            </label>
+            {% endfor %}
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-cancel" onclick="hideExclusionModal()">Cancel</button>
+            <button class="btn btn-confirm" onclick="confirmExclusion()">Confirm</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const docId = {{ document.id }};
+const searchId = {{ search_id }};
+const passNumber = {{ pass_number }};
+
+let touchStartX = 0;
+let touchEndX = 0;
+
+function toggleLlmPanel() {
+    const content = document.getElementById('llm-content');
+    content.classList.toggle('expanded');
+}
+
+async function saveDecision(decision, exclusionCodes = null) {
+    const notes = document.getElementById('notes').value;
+    const data = {
+        pass_number: passNumber,
+        decision: decision,
+        notes: notes || null
+    };
+
+    if (exclusionCodes !== null) {
+        data.exclusion_codes = exclusionCodes;
+    }
+
+    try {
+        const response = await fetch(`/api/documents/${docId}/review`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+
+        if (response.ok) {
+            // Auto-advance to next paper
+            navigate('next');
+        } else {
+            alert('Failed to save review');
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function acceptLlm(accepted) {
+    try {
+        await fetch(`/api/documents/${docId}/llm-accept`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({pass_number: passNumber, accepted: accepted})
+        });
+        // Update UI
+        document.querySelectorAll('.llm-actions .btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelector(accepted ? '.btn-accept' : '.btn-reject').classList.add('active');
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+function showExclusionModal() {
+    document.getElementById('exclusion-modal').classList.add('show');
+}
+
+function hideExclusionModal() {
+    document.getElementById('exclusion-modal').classList.remove('show');
+}
+
+function confirmExclusion() {
+    const codes = Array.from(document.querySelectorAll('input[name="exclusion_code"]:checked'))
+        .map(cb => cb.value);
+    hideExclusionModal();
+    saveDecision('exclude', codes);
+}
+
+async function navigate(direction) {
+    if (direction === 'random') {
+        try {
+            const response = await fetch(`/api/documents/random?search_id=${searchId}&pass=${passNumber}`);
+            const data = await response.json();
+            if (data.document_id) {
+                window.location.href = `/review/${searchId}?pass=${passNumber}&doc=${data.document_id}`;
+            } else {
+                alert('All papers reviewed!');
+            }
+        } catch (e) {
+            alert('Error: ' + e.message);
+        }
+    } else {
+        try {
+            const response = await fetch(`/api/documents/nav?search_id=${searchId}&pass=${passNumber}&current=${docId}`);
+            const data = await response.json();
+            const targetId = direction === 'prev' ? data.prev : data.next;
+            if (targetId) {
+                window.location.href = `/review/${searchId}?pass=${passNumber}&doc=${targetId}`;
+            }
+        } catch (e) {
+            alert('Error: ' + e.message);
+        }
+    }
+}
+
+// Swipe gestures
+document.addEventListener('touchstart', e => {
+    touchStartX = e.changedTouches[0].screenX;
+}, {passive: true});
+
+document.addEventListener('touchend', e => {
+    touchEndX = e.changedTouches[0].screenX;
+    handleSwipe();
+}, {passive: true});
+
+function handleSwipe() {
+    const threshold = 100;
+    const diff = touchEndX - touchStartX;
+
+    if (diff > threshold) {
+        navigate('prev');
+    } else if (diff < -threshold) {
+        navigate('next');
+    }
+}
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+    // Don't trigger if typing in textarea
+    if (e.target.tagName === 'TEXTAREA') return;
+
+    switch(e.key) {
+        case 'i': saveDecision('include'); break;
+        case 'x': showExclusionModal(); break;
+        case '?': saveDecision('uncertain'); break;
+        case 'j': navigate('next'); break;
+        case 'k': navigate('prev'); break;
+        case 'g': navigate('random'); break;
+        case 'Escape': hideExclusionModal(); break;
+    }
+});
+</script>
+{% endblock %}
