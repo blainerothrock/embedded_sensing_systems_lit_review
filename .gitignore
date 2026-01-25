@@ -14,3 +14,11 @@ semantic-scholar-api-swagger.json
 
 # Claude
 .claude/
+
+# Environment files
+.env
+*.db.bak
+*.db.upload
+
+# Database (synced to DigitalOcean Spaces)
+lit_review.db

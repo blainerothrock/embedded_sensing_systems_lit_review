@@ -6,7 +6,9 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "bibtexparser>=1.4.3",
+    "boto3>=1.35.0",
     "ollama>=0.4.0",
+    "python-dotenv>=1.0.0",
     "textual>=6.7.1",
 ]
 
