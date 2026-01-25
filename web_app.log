@@ -1,0 +1,30 @@
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://10.42.0.14:5000
+[33mPress CTRL+C to quit[0m
+127.0.0.1 - - [25/Jan/2026 20:42:13] "GET /login HTTP/1.1" 200 -
+127.0.0.1 - - [25/Jan/2026 20:42:37] "[32mGET /review/1?pass=1 HTTP/1.0[0m" 302 -
+127.0.0.1 - - [25/Jan/2026 20:42:37] "GET /login HTTP/1.0" 200 -
+127.0.0.1 - - [25/Jan/2026 20:42:37] "[36mGET /static/app.js HTTP/1.0[0m" 304 -
+127.0.0.1 - - [25/Jan/2026 20:42:37] "GET /static/app.css HTTP/1.0" 200 -
+127.0.0.1 - - [25/Jan/2026 20:42:40] "POST /login HTTP/1.0" 200 -
+127.0.0.1 - - [25/Jan/2026 20:42:40] "GET / HTTP/1.0" 200 -
+127.0.0.1 - - [25/Jan/2026 20:42:41] "[36mGET /static/app.js HTTP/1.0[0m" 304 -
+127.0.0.1 - - [25/Jan/2026 20:42:41] "[36mGET /static/app.css HTTP/1.0[0m" 304 -
+127.0.0.1 - - [25/Jan/2026 20:42:42] "GET /review/1?pass=1 HTTP/1.0" 200 -
+127.0.0.1 - - [25/Jan/2026 20:42:42] "[36mGET /static/app.css HTTP/1.0[0m" 304 -
+127.0.0.1 - - [25/Jan/2026 20:42:42] "[36mGET /static/app.js HTTP/1.0[0m" 304 -
+127.0.0.1 - - [25/Jan/2026 20:42:52] "[32mGET /review/2?pass=1&doc=17 HTTP/1.0[0m" 302 -
+127.0.0.1 - - [25/Jan/2026 20:42:52] "GET /login HTTP/1.0" 200 -
+127.0.0.1 - - [25/Jan/2026 20:42:52] "[36mGET /static/app.css HTTP/1.0[0m" 304 -
+127.0.0.1 - - [25/Jan/2026 20:42:53] "[36mGET /static/app.js HTTP/1.0[0m" 304 -
+127.0.0.1 - - [25/Jan/2026 20:42:57] "POST /login HTTP/1.0" 200 -
+127.0.0.1 - - [25/Jan/2026 20:42:57] "GET / HTTP/1.0" 200 -
+127.0.0.1 - - [25/Jan/2026 20:42:57] "GET /static/app.css HTTP/1.0" 200 -
+127.0.0.1 - - [25/Jan/2026 20:42:58] "[36mGET /static/app.js HTTP/1.0[0m" 304 -
+127.0.0.1 - - [25/Jan/2026 20:42:59] "GET /review/1?pass=1 HTTP/1.0" 200 -
+127.0.0.1 - - [25/Jan/2026 20:42:59] "GET /static/app.css HTTP/1.0" 200 -
+127.0.0.1 - - [25/Jan/2026 20:42:59] "[36mGET /static/app.js HTTP/1.0[0m" 304 -

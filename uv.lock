@@ -117,6 +117,18 @@ wheels = [
 ]
 
 [[package]]
+name = "gunicorn"
+version = "24.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/78/0a/10739c03537ec5b131a867bf94df2e412b437696c7e5d26970e2198a80d2/gunicorn-24.1.1.tar.gz", hash = "sha256:f006d110e5cb3102859b4f5cd48335dbd9cc28d0d27cd24ddbdafa6c60929408", size = 287567, upload-time = "2026-01-24T01:15:31.359Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/96/90/cfe637677916fc6f53cd2b05d5746e249f683e1fa14c9e745a88c66f7290/gunicorn-24.1.1-py3-none-any.whl", hash = "sha256:757f6b621fc4f7581a90600b2cd9df593461f06a41d7259cb9b94499dc4095a8", size = 114920, upload-time = "2026-01-24T01:15:29.656Z" },
+]
+
+[[package]]
 name = "h11"
 version = "0.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -212,6 +224,7 @@ dependencies = [
     { name = "bibtexparser" },
     { name = "boto3" },
     { name = "flask" },
+    { name = "gunicorn" },
     { name = "ollama" },
     { name = "python-dotenv" },
     { name = "textual" },
@@ -222,6 +235,7 @@ requires-dist = [
     { name = "bibtexparser", specifier = ">=1.4.3" },
     { name = "boto3", specifier = ">=1.35.0" },
     { name = "flask", specifier = ">=3.1.2" },
+    { name = "gunicorn", specifier = ">=24.1.1" },
     { name = "ollama", specifier = ">=0.4.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "textual", specifier = ">=6.7.1" },
@@ -306,6 +320,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/9d/5a/652dac4b7affc2b37b95386f8ae78f22808af09d720689e3d7a86b6ed98e/ollama-0.6.1.tar.gz", hash = "sha256:478c67546836430034b415ed64fa890fd3d1ff91781a9d548b3325274e69d7c6", size = 51620, upload-time = "2025-11-13T23:02:17.416Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/47/4f/4a617ee93d8208d2bcf26b2d8b9402ceaed03e3853c754940e2290fed063/ollama-0.6.1-py3-none-any.whl", hash = "sha256:fc4c984b345735c5486faeee67d8a265214a31cbb828167782dc642ce0a2bf8c", size = 14354, upload-time = "2025-11-13T23:02:16.292Z" },
+]
+
+[[package]]
+name = "packaging"
+version = "26.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/65/ee/299d360cdc32edc7d2cf530f3accf79c4fca01e96ffc950d8a52213bd8e4/packaging-26.0.tar.gz", hash = "sha256:00243ae351a257117b6a241061796684b084ed1c516a08c48a3f7e147a9d80b4", size = 143416, upload-time = "2026-01-21T20:50:39.064Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b7/b9/c538f279a4e237a006a2c98387d081e9eb060d203d8ed34467cc0f0b9b53/packaging-26.0-py3-none-any.whl", hash = "sha256:b36f1fef9334a5588b4166f8bcd26a14e521f2b55e6b9de3aaa80d3ff7a37529", size = 74366, upload-time = "2026-01-21T20:50:37.788Z" },
 ]
 
 [[package]]

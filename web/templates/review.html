@@ -105,16 +105,17 @@
         {% endif %}
     </main>
 
-    <nav class="review-nav">
-        <button class="nav-btn" id="prev-btn" onclick="navigate('prev')">&larr; Prev</button>
-        <button class="nav-btn" id="random-btn" onclick="navigate('random')">Random</button>
-        <button class="nav-btn" id="next-btn" onclick="navigate('next')">Next &rarr;</button>
-    </nav>
-
-    <footer class="decision-buttons">
-        <button class="decision-btn include" onclick="saveDecision('include')">Include</button>
-        <button class="decision-btn exclude" onclick="showExclusionModal()">Exclude</button>
-        <button class="decision-btn uncertain" onclick="saveDecision('uncertain')">?</button>
+    <footer class="bottom-panel">
+        <div class="decision-buttons">
+            <button class="decision-btn include" onclick="saveDecision('include')">Include</button>
+            <button class="decision-btn exclude" onclick="showExclusionModal()">Exclude</button>
+            <button class="decision-btn uncertain" onclick="saveDecision('uncertain')">?</button>
+        </div>
+        <nav class="review-nav">
+            <button class="nav-btn" id="prev-btn" onclick="navigate('prev')">&larr;</button>
+            <button class="nav-btn" id="random-btn" onclick="navigate('random')">Random</button>
+            <button class="nav-btn" id="next-btn" onclick="navigate('next')">&rarr;</button>
+        </nav>
     </footer>
 </div>
 

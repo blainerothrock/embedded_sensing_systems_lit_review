@@ -18,7 +18,7 @@ from flask import (
 from . import db
 
 app = Flask(__name__)
-app.secret_key = os.urandom(32)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(32)
 
 # Passcode from environment or set at runtime
 PASSCODE: str | None = os.environ.get("LIT_REVIEW_PASSCODE")
