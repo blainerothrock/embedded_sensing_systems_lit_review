@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}Literature Review{% endblock %}
+
+{% block body %}
+<div class="app-container">
+    <header class="app-header">
+        <h1>Literature Review</h1>
+        <a href="{{ url_for('logout') }}" class="logout-btn">Logout</a>
+    </header>
+
+    <main class="main-content">
+        <div class="search-list">
+            {% for search in searches %}
+            <div class="search-card">
+                <h2 class="search-title">{{ search.source }}</h2>
+
+                <div class="progress-section">
+                    <div class="pass-progress">
+                        <span class="pass-label">Pass 1</span>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: {{ (search.pass1.human_reviewed / search.total * 100) if search.total > 0 else 0 }}%"></div>
+                        </div>
+                        <span class="progress-text">{{ search.pass1.human_reviewed }}/{{ search.total }}</span>
+                    </div>
+                    <div class="pass-stats">
+                        <span class="stat include">+{{ search.pass1.included }}</span>
+                        <span class="stat exclude">-{{ search.pass1.excluded }}</span>
+                        <span class="stat uncertain">?{{ search.pass1.uncertain }}</span>
+                        {% if search.pass1.llm_reviewed > 0 %}
+                        <span class="stat llm" title="LLM suggestions">AI:{{ search.pass1.llm_reviewed }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="progress-section">
+                    <div class="pass-progress">
+                        <span class="pass-label">Pass 2</span>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: {{ (search.pass2.human_reviewed / search.pass2.eligible * 100) if search.pass2.eligible > 0 else 0 }}%"></div>
+                        </div>
+                        <span class="progress-text">{{ search.pass2.human_reviewed }}/{{ search.pass2.eligible }}</span>
+                    </div>
+                    <div class="pass-stats">
+                        <span class="stat include">+{{ search.pass2.included }}</span>
+                        <span class="stat exclude">-{{ search.pass2.excluded }}</span>
+                        <span class="stat uncertain">?{{ search.pass2.uncertain }}</span>
+                        {% if search.pass2.llm_reviewed > 0 %}
+                        <span class="stat llm" title="LLM suggestions">AI:{{ search.pass2.llm_reviewed }}</span>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="search-actions">
+                    <a href="{{ url_for('review', search_id=search.id, pass=1) }}" class="btn btn-primary">Pass 1</a>
+                    <a href="{{ url_for('review', search_id=search.id, pass=2) }}" class="btn btn-secondary">Pass 2</a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="browse-link">
+            <a href="{{ url_for('browse') }}" class="btn btn-browse">Browse All Papers</a>
+        </div>
+    </main>
+</div>
+{% endblock %}
