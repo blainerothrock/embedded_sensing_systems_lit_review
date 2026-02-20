@@ -22,3 +22,5 @@ semantic-scholar-api-swagger.json
 
 # Database (synced to DigitalOcean Spaces)
 lit_review.db
+
+.DS_Store

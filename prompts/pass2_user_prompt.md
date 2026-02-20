@@ -18,17 +18,13 @@ DOMAIN GUIDANCE:
 - Health includes: medical, clinical, rehabilitation, fitness, wellness, assistive technology, physiological monitoring, mental health, sports performance, aging/accessibility
 - Ecology includes: environmental monitoring, wildlife tracking, agriculture, water quality, soil sensing, conservation, pollution detection, habitat monitoring
 - Adjacent applications (e.g., smart buildings for occupant health, agricultural IoT, food safety sensing) should be INCLUDED
-- Reviews/surveys of embedded sensing systems in health or ecology ARE relevant — include them
+- Reviews/surveys of embedded sensing systems in health or ecology ARE excluded.
 
 CALIBRATION EXAMPLES FROM PRIOR SCREENING:
 
 Example 1 — INCLUDE (health-adjacent, wearable platform):
   Title: "Training Smarter with OpenEarable: A Boxing Gesture Recognition Dashboard Integration"
   Why: Sports/fitness gesture recognition using wearable embedded sensing. Health-adjacent, custom artifact evaluation. Include.
-
-Example 2 — INCLUDE (review paper, relevant domain):
-  Title: "Body-Area Capacitive or Electric Field Sensing for Human Activity Recognition and Human-Computer Interaction: A Comprehensive Survey"
-  Why: Survey of body-area sensing systems for health/HCI. Reviews are relevant if they cover embedded sensing in target domains.
 
 Example 3 — EXCLUDE (high-power radar, not embedded low-power):
   Title: "mmDrive: Fine-grained Fatigue Driving Detection Using mmWave Radar"
