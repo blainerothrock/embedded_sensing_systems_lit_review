@@ -45,6 +45,28 @@
                 {% endif %}
             </div>
 
+            {% if pass_review and pass_review.llm_suggestion %}
+            <div class="llm-panel" id="llm-panel">
+                <div class="llm-header">
+                    <span>LLM Suggestion</span>
+                    <span class="llm-decision llm-{{ pass_review.llm_suggestion.decision }}">
+                        {{ pass_review.llm_suggestion.decision|upper }}
+                        ({{ (pass_review.llm_suggestion.confidence * 100)|int }}%)
+                    </span>
+                </div>
+                <div class="llm-content expanded">
+                    <p class="llm-reasoning">{{ pass_review.llm_suggestion.reasoning }}</p>
+
+                    {% if pass_review.llm_suggestion.exclusion_codes %}
+                    <p class="llm-codes">
+                        <strong>Suggested codes:</strong>
+                        {{ pass_review.llm_suggestion.exclusion_codes|join(', ') }}
+                    </p>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+
             {% if pass_number == 2 and document.abstract %}
             <div class="abstract-section">
                 <h2>Abstract</h2>
@@ -58,37 +80,6 @@
             </div>
             {% endif %}
         </article>
-
-        {% if pass_review and pass_review.llm_suggestion %}
-        <div class="llm-panel" id="llm-panel">
-            <button class="llm-toggle" onclick="toggleLlmPanel()">
-                <span>LLM Suggestion</span>
-                <span class="llm-decision llm-{{ pass_review.llm_suggestion.decision }}">
-                    {{ pass_review.llm_suggestion.decision|upper }}
-                    ({{ (pass_review.llm_suggestion.confidence * 100)|int }}%)
-                </span>
-            </button>
-            <div class="llm-content" id="llm-content">
-                <p class="llm-reasoning">{{ pass_review.llm_suggestion.reasoning }}</p>
-
-                {% if pass_review.llm_suggestion.exclusion_codes %}
-                <p class="llm-codes">
-                    <strong>Suggested codes:</strong>
-                    {{ pass_review.llm_suggestion.exclusion_codes|join(', ') }}
-                </p>
-                {% endif %}
-
-                {% if pass_review.llm_suggestion.model %}
-                <p class="llm-meta">Model: {{ pass_review.llm_suggestion.model }}</p>
-                {% endif %}
-
-                <div class="llm-actions">
-                    <button class="btn btn-small btn-accept {% if pass_review.llm_accepted == true %}active{% endif %}" onclick="acceptLlm(true)">Accept</button>
-                    <button class="btn btn-small btn-reject {% if pass_review.llm_accepted == false %}active{% endif %}" onclick="acceptLlm(false)">Reject</button>
-                </div>
-            </div>
-        </div>
-        {% endif %}
 
         <div class="notes-section">
             <label for="notes">Notes</label>
@@ -158,11 +149,6 @@ const passNumber = {{ pass_number }};
 let touchStartX = 0;
 let touchEndX = 0;
 
-function toggleLlmPanel() {
-    const content = document.getElementById('llm-content');
-    content.classList.toggle('expanded');
-}
-
 async function saveDecision(decision, exclusionCodes = null) {
     const notes = document.getElementById('notes').value;
     const data = {
@@ -204,21 +190,6 @@ async function toggleRelated(related) {
         console.error(e);
         // Revert checkbox on error
         document.getElementById('related-checkbox').checked = !related;
-    }
-}
-
-async function acceptLlm(accepted) {
-    try {
-        await fetch(`/api/documents/${docId}/llm-accept`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({pass_number: passNumber, accepted: accepted})
-        });
-        // Update UI
-        document.querySelectorAll('.llm-actions .btn').forEach(btn => btn.classList.remove('active'));
-        document.querySelector(accepted ? '.btn-accept' : '.btn-reject').classList.add('active');
-    } catch (e) {
-        console.error(e);
     }
 }
 
