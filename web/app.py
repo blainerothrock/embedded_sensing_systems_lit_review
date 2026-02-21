@@ -214,6 +214,7 @@ def api_document(doc_id: int):
         "keywords": doc.keywords,
         "journal": doc.journal,
         "booktitle": doc.booktitle,
+        "related": doc.related,
         "tags": tags,
         "duplicates": duplicates,
         "pass1": {
@@ -290,6 +291,16 @@ def api_save_review(doc_id: int):
     )
 
     return jsonify({"success": True, "pass_review_id": pass_review_id})
+
+
+@app.route("/api/documents/<int:doc_id>/related", methods=["POST"])
+@require_auth
+def api_set_related(doc_id: int):
+    """Toggle the 'related' flag on a document."""
+    data = request.get_json()
+    related = data.get("related", False)
+    db.set_document_related(doc_id, related)
+    return jsonify({"success": True})
 
 
 @app.route("/api/documents/<int:doc_id>/llm-accept", methods=["POST"])

@@ -391,6 +391,16 @@ def migrate_pass_review_support(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def migrate_related_flag(conn: sqlite3.Connection) -> None:
+    """Add 'related' boolean flag to document table for excluded-but-useful papers."""
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(document)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if "related" not in columns:
+        cursor.execute("ALTER TABLE document ADD COLUMN related INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+
+
 def migrate_llm_audit_and_tagging(conn: sqlite3.Connection) -> None:
     """Add llm_request_log_id column to pass_review for existing databases."""
     cursor = conn.cursor()
@@ -505,6 +515,7 @@ def init_db() -> sqlite3.Connection:
     create_schema(conn)
     migrate_duplicate_support(conn)
     migrate_pass_review_support(conn)
+    migrate_related_flag(conn)
     migrate_llm_audit_and_tagging(conn)
     migrate_llm_domain_column(conn)
     migrate_backfill_llm_metadata(conn)
