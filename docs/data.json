@@ -1,0 +1,199 @@
+{
+  "searches": [
+    {
+      "id": 1,
+      "source": "ACM Digital Library - DIY",
+      "count": 16
+    },
+    {
+      "id": 2,
+      "source": "ACM Digital Library",
+      "count": 2018
+    },
+    {
+      "id": 3,
+      "source": "ACM Digital Library - Low Cost",
+      "count": 450
+    }
+  ],
+  "total_documents": 2484,
+  "duplicate_groups": 0,
+  "pass1": {
+    "human": {
+      "exclude": 1494,
+      "include": 990
+    },
+    "human_total": 2484,
+    "llm": {
+      "exclude": 1264,
+      "include": 1218,
+      "uncertain": 2
+    },
+    "llm_total": 2484,
+    "agreement": 1979,
+    "agreement_total": 2484,
+    "agreement_pct": 79.7,
+    "pending_human": 0
+  },
+  "pass2": {
+    "eligible": 990,
+    "human": {
+      "exclude": 77,
+      "include": 36
+    },
+    "human_total": 113,
+    "llm": {
+      "exclude": 514,
+      "include": 430,
+      "uncertain": 28
+    },
+    "llm_total": 972,
+    "agreement": 93,
+    "agreement_total": 113,
+    "agreement_pct": 82.3,
+    "pending_human": 877
+  },
+  "exclusion_codes": [
+    {
+      "code": "EX1",
+      "description": "High-power and/or high-dimensional data processing (image, video, audio, RF; >=500mW; macroprocessor-based)",
+      "pass1": 181,
+      "pass2": 7
+    },
+    {
+      "code": "EX2",
+      "description": "Commercial off the shelf (COTS) use or repurpose (smartphones, smartwatches, commercial devices)",
+      "pass1": 49,
+      "pass2": 16
+    },
+    {
+      "code": "EX3",
+      "description": "Out-of-scope platform or applications (non-medical/ecological; vehicles, UAVs, drones, VR/AR, entertainment)",
+      "pass1": 419,
+      "pass2": 21
+    },
+    {
+      "code": "EX5",
+      "description": "Application-agnostic (no targeted application, e.g., novel wireless protocol, general security)",
+      "pass1": 327,
+      "pass2": 24
+    },
+    {
+      "code": "EX6",
+      "description": "No specific embedded artifact (no system built/designed by authors, e.g., public dataset analysis, simulation)",
+      "pass1": 642,
+      "pass2": 21
+    },
+    {
+      "code": "other",
+      "description": null,
+      "pass1": 3,
+      "pass2": 0
+    },
+    {
+      "code": "reivew",
+      "description": null,
+      "pass1": 27,
+      "pass2": 1
+    }
+  ],
+  "related_count": 7,
+  "search_breakdown": [
+    {
+      "source": "ACM Digital Library - DIY",
+      "total": 16,
+      "include": 13,
+      "exclude": 3,
+      "uncertain": 0
+    },
+    {
+      "source": "ACM Digital Library",
+      "total": 2018,
+      "include": 844,
+      "exclude": 1174,
+      "uncertain": 0
+    },
+    {
+      "source": "ACM Digital Library - Low Cost",
+      "total": 450,
+      "include": 133,
+      "exclude": 317,
+      "uncertain": 0
+    }
+  ],
+  "sankey": {
+    "nodes": [
+      {
+        "id": "all",
+        "label": "All Papers (2484)"
+      },
+      {
+        "id": "p1_include",
+        "label": "Pass 1 Include (990)"
+      },
+      {
+        "id": "p1_exclude",
+        "label": "Pass 1 Exclude (1494)"
+      },
+      {
+        "id": "p1_uncertain",
+        "label": "Pass 1 Uncertain (0)"
+      },
+      {
+        "id": "p2_include",
+        "label": "Pass 2 Include (36)"
+      },
+      {
+        "id": "p2_exclude",
+        "label": "Pass 2 Exclude (77)"
+      },
+      {
+        "id": "p2_pending",
+        "label": "Pass 2 Pending (877)"
+      }
+    ],
+    "links": [
+      {
+        "source": "all",
+        "target": "p1_include",
+        "value": 990
+      },
+      {
+        "source": "all",
+        "target": "p1_exclude",
+        "value": 1494
+      },
+      {
+        "source": "p1_include",
+        "target": "p2_include",
+        "value": 36
+      },
+      {
+        "source": "p1_include",
+        "target": "p2_exclude",
+        "value": 77
+      },
+      {
+        "source": "p1_include",
+        "target": "p2_pending",
+        "value": 877
+      }
+    ]
+  },
+  "llm_models": [
+    "qwen3:8b",
+    "qwen3:32b"
+  ],
+  "llm_performance": [
+    {
+      "pass": 1,
+      "avg_response_ms": 32893,
+      "count": 2484
+    },
+    {
+      "pass": 2,
+      "avg_response_ms": 18296,
+      "count": 972
+    }
+  ]
+}
