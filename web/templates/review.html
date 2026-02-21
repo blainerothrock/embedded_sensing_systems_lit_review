@@ -95,6 +95,14 @@
             <textarea id="notes" placeholder="Add notes...">{{ pass_review.notes if pass_review else '' }}</textarea>
         </div>
 
+        <div class="related-section">
+            <label class="related-toggle">
+                <input type="checkbox" id="related-checkbox" {% if document.related %}checked{% endif %} onchange="toggleRelated(this.checked)">
+                <span>Related</span>
+                <span class="related-hint">Excluded but worth reading for context</span>
+            </label>
+        </div>
+
         {% if pass_review and pass_review.decision %}
         <div class="current-decision">
             Current: <span class="decision-badge decision-{{ pass_review.decision }}">{{ pass_review.decision|upper }}</span>
@@ -185,6 +193,20 @@ async function saveDecision(decision, exclusionCodes = null) {
     }
 }
 
+async function toggleRelated(related) {
+    try {
+        await fetch(`/api/documents/${docId}/related`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({related: related})
+        });
+    } catch (e) {
+        console.error(e);
+        // Revert checkbox on error
+        document.getElementById('related-checkbox').checked = !related;
+    }
+}
+
 async function acceptLlm(accepted) {
     try {
         await fetch(`/api/documents/${docId}/llm-accept`, {
@@ -272,6 +294,12 @@ document.addEventListener('keydown', (e) => {
         case 'i': saveDecision('include'); break;
         case 'x': showExclusionModal(); break;
         case '?': saveDecision('uncertain'); break;
+        case 'r': {
+            const cb = document.getElementById('related-checkbox');
+            cb.checked = !cb.checked;
+            toggleRelated(cb.checked);
+            break;
+        }
         case 'j': navigate('next'); break;
         case 'k': navigate('prev'); break;
         case 'g': navigate('random'); break;

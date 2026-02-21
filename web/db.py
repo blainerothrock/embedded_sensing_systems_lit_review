@@ -34,6 +34,7 @@ class Document:
     booktitle: str | None = None
     duplicate_group_id: int | None = None
     search_source: str | None = None
+    related: bool = False
 
 
 @dataclass
@@ -163,7 +164,7 @@ def get_documents_for_pass(search_id: int, pass_number: int) -> list[Document]:
             """
             SELECT
                 d.id, d.bibtex_key, d.entry_type, d.title, d.doi, d.url, d.search_id,
-                d.duplicate_group_id,
+                d.duplicate_group_id, COALESCE(d.related, 0) as related,
                 COALESCE(a.author, i.author, ib.author) as author,
                 COALESCE(a.year, i.year, ib.year) as year,
                 COALESCE(a.abstract, i.abstract, ib.abstract) as abstract,
@@ -184,7 +185,7 @@ def get_documents_for_pass(search_id: int, pass_number: int) -> list[Document]:
             """
             SELECT
                 d.id, d.bibtex_key, d.entry_type, d.title, d.doi, d.url, d.search_id,
-                d.duplicate_group_id,
+                d.duplicate_group_id, COALESCE(d.related, 0) as related,
                 COALESCE(a.author, i.author, ib.author) as author,
                 COALESCE(a.year, i.year, ib.year) as year,
                 COALESCE(a.abstract, i.abstract, ib.abstract) as abstract,
@@ -220,6 +221,7 @@ def get_documents_for_pass(search_id: int, pass_number: int) -> list[Document]:
                 journal=row["journal"],
                 booktitle=row["booktitle"],
                 duplicate_group_id=row["duplicate_group_id"],
+                related=bool(row["related"]),
             )
         )
     conn.close()
@@ -234,7 +236,7 @@ def get_document(document_id: int) -> Document | None:
         """
         SELECT
             d.id, d.bibtex_key, d.entry_type, d.title, d.doi, d.url, d.search_id,
-            d.duplicate_group_id,
+            d.duplicate_group_id, COALESCE(d.related, 0) as related,
             s.source as search_source,
             COALESCE(a.author, i.author, ib.author) as author,
             COALESCE(a.year, i.year, ib.year) as year,
@@ -273,6 +275,7 @@ def get_document(document_id: int) -> Document | None:
         booktitle=row["booktitle"],
         duplicate_group_id=row["duplicate_group_id"],
         search_source=row["search_source"],
+        related=bool(row["related"]),
     )
 
 
@@ -479,6 +482,18 @@ def set_document_tags(document_id: int, tag_names: list[str]) -> None:
     conn.close()
 
 
+def set_document_related(document_id: int, related: bool) -> None:
+    """Set the 'related' flag on a document."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE document SET related = ? WHERE id = ?",
+        (int(related), document_id),
+    )
+    conn.commit()
+    conn.close()
+
+
 def get_duplicate_searches(doc_id: int, duplicate_group_id: int) -> list[dict]:
     """Get other documents in the same duplicate group."""
     conn = get_connection()
@@ -505,6 +520,7 @@ def get_all_documents_for_browse() -> list[dict]:
         SELECT
             d.id, d.title, d.search_id,
             s.source as search_source,
+            COALESCE(d.related, 0) as related,
             COALESCE(a.year, i.year, ib.year) as year,
             a.journal,
             COALESCE(i.booktitle, ib.booktitle) as booktitle
@@ -525,6 +541,7 @@ def get_all_documents_for_browse() -> list[dict]:
             "search_id": row["search_id"],
             "search_source": row["search_source"],
             "venue": row["journal"] or row["booktitle"],
+            "related": bool(row["related"]),
         })
     conn.close()
     return documents

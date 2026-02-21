@@ -24,3 +24,4 @@ semantic-scholar-api-swagger.json
 lit_review.db
 
 .DS_Store
+review.db

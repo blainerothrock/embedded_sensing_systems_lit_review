@@ -53,6 +53,12 @@
                 </select>
             </label>
         </div>
+        <div class="filter-row">
+            <label>
+                <input type="checkbox" id="filter-related" onchange="applyFilters()">
+                Related only
+            </label>
+        </div>
         <button class="btn btn-reset" onclick="resetFilters()">Reset Filters</button>
     </div>
 
@@ -83,8 +89,11 @@ function applyFilters() {
     const pass2Filter = document.getElementById('filter-pass2').value;
     const searchFilter = document.getElementById('filter-search').value;
     const codeFilter = document.getElementById('filter-code').value;
+    const relatedOnly = document.getElementById('filter-related').checked;
 
     let filtered = allDocuments.filter(doc => {
+        // Related filter
+        if (relatedOnly && !doc.related) return false;
         // Pass 1 filter
         if (pass1Filter) {
             if (pass1Filter === 'pending' && doc.pass1 !== null) return false;
@@ -128,6 +137,7 @@ function renderPapers(papers) {
             <div class="paper-badges">
                 <span class="badge badge-${doc.pass1 || 'pending'}">P1: ${formatDecision(doc.pass1)}</span>
                 <span class="badge badge-${doc.pass2 || 'pending'}">P2: ${formatDecision(doc.pass2)}</span>
+                ${doc.related ? '<span class="badge badge-related">📌</span>' : ''}
             </div>
             <h3 class="paper-title">${doc.title || 'Untitled'}</h3>
             <div class="paper-info">
@@ -160,6 +170,7 @@ function resetFilters() {
     document.getElementById('filter-pass2').value = '';
     document.getElementById('filter-search').value = '';
     document.getElementById('filter-code').value = '';
+    document.getElementById('filter-related').checked = false;
     applyFilters();
 }
 
