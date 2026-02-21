@@ -20,6 +20,14 @@
     <main class="review-main" id="review-main" data-doc-id="{{ document.id }}" data-search-id="{{ search_id }}" data-pass="{{ pass_number }}">
         <article class="paper-content">
             <h1 class="paper-title">{{ document.title or 'Untitled' }}</h1>
+            {% if pass_review and pass_review.decision %}
+            <div class="current-decision-inline">
+                <span class="decision-badge decision-{{ pass_review.decision }}">{{ pass_review.decision|upper }}</span>
+                {% if pass_review.exclusion_codes %}
+                <span class="exclusion-codes">({{ pass_review.exclusion_codes|join(', ') }})</span>
+                {% endif %}
+            </div>
+            {% endif %}
             <p class="paper-year">{{ document.year or 'Unknown year' }}</p>
 
             <div class="paper-meta">
@@ -94,14 +102,6 @@
             </label>
         </div>
 
-        {% if pass_review and pass_review.decision %}
-        <div class="current-decision">
-            Current: <span class="decision-badge decision-{{ pass_review.decision }}">{{ pass_review.decision|upper }}</span>
-            {% if pass_review.exclusion_codes %}
-            <span class="exclusion-codes">({{ pass_review.exclusion_codes|join(', ') }})</span>
-            {% endif %}
-        </div>
-        {% endif %}
     </main>
 
     <footer class="bottom-panel">

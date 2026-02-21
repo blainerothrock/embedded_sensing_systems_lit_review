@@ -792,6 +792,15 @@ html, body {
 .badge-uncertain { background: var(--color-uncertain); color: black; }
 .badge-related { background: #6366f1; color: white; }
 
+.current-decision-inline {
+    margin: 6px 0;
+}
+.current-decision-inline .exclusion-codes {
+    font-size: 0.85rem;
+    color: var(--text-secondary, #888);
+    margin-left: 6px;
+}
+
 /* Related toggle in review view */
 .related-section {
     padding: 8px 16px;
