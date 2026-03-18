@@ -66,11 +66,12 @@
 </div>
 
 <script>
+const SCRIPT_NAME = "{{ request.script_root }}";
 let allDocuments = [];
 
 async function loadDocuments() {
     try {
-        const response = await fetch('/api/browse');
+        const response = await fetch(`${SCRIPT_NAME}/api/browse`);
         allDocuments = await response.json();
         applyFilters();
     } catch (e) {
@@ -124,7 +125,7 @@ function renderPapers(papers) {
     }
 
     list.innerHTML = papers.map(doc => `
-        <a href="/review/${doc.search_id}?pass=1&doc=${doc.id}" class="paper-card">
+        <a href="${SCRIPT_NAME}/review/${doc.search_id}?pass=1&doc=${doc.id}" class="paper-card">
             <div class="paper-badges">
                 <span class="badge badge-${doc.pass1 || 'pending'}">P1: ${formatDecision(doc.pass1)}</span>
                 <span class="badge badge-${doc.pass2 || 'pending'}">P2: ${formatDecision(doc.pass2)}</span>

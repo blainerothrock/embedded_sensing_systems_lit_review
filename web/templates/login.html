@@ -31,6 +31,7 @@
 </div>
 
 <script>
+const SCRIPT_NAME = "{{ request.script_root }}";
 let passcode = '';
 
 function updateDisplay() {
@@ -42,14 +43,14 @@ async function submitPasscode() {
     if (!passcode) return;
 
     try {
-        const response = await fetch('/login', {
+        const response = await fetch(`${SCRIPT_NAME}/login`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({passcode})
         });
         const data = await response.json();
         if (data.success) {
-            window.location.href = '/';
+            window.location.href = SCRIPT_NAME || '/';
         } else {
             passcode = '';
             updateDisplay();

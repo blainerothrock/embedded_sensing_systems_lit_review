@@ -143,6 +143,7 @@
 </div>
 
 <script>
+const SCRIPT_NAME = "{{ request.script_root }}";
 const docId = {{ document.id }};
 const searchId = {{ search_id }};
 const passNumber = {{ pass_number }};
@@ -168,7 +169,7 @@ async function saveDecision(decision, exclusionCodes = null) {
     }
 
     try {
-        const response = await fetch(`/api/documents/${docId}/review`, {
+        const response = await fetch(`${SCRIPT_NAME}/api/documents/${docId}/review`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(data)
@@ -187,7 +188,7 @@ async function saveDecision(decision, exclusionCodes = null) {
 
 async function acceptLlm(accepted) {
     try {
-        await fetch(`/api/documents/${docId}/llm-accept`, {
+        await fetch(`${SCRIPT_NAME}/api/documents/${docId}/llm-accept`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({pass_number: passNumber, accepted: accepted})
@@ -218,10 +219,10 @@ function confirmExclusion() {
 async function navigate(direction) {
     if (direction === 'random') {
         try {
-            const response = await fetch(`/api/documents/random?search_id=${searchId}&pass=${passNumber}`);
+            const response = await fetch(`${SCRIPT_NAME}/api/documents/random?search_id=${searchId}&pass=${passNumber}`);
             const data = await response.json();
             if (data.document_id) {
-                window.location.href = `/review/${searchId}?pass=${passNumber}&doc=${data.document_id}`;
+                window.location.href = `${SCRIPT_NAME}/review/${searchId}?pass=${passNumber}&doc=${data.document_id}`;
             } else {
                 alert('All papers reviewed!');
             }
@@ -230,11 +231,11 @@ async function navigate(direction) {
         }
     } else {
         try {
-            const response = await fetch(`/api/documents/nav?search_id=${searchId}&pass=${passNumber}&current=${docId}`);
+            const response = await fetch(`${SCRIPT_NAME}/api/documents/nav?search_id=${searchId}&pass=${passNumber}&current=${docId}`);
             const data = await response.json();
             const targetId = direction === 'prev' ? data.prev : data.next;
             if (targetId) {
-                window.location.href = `/review/${searchId}?pass=${passNumber}&doc=${targetId}`;
+                window.location.href = `${SCRIPT_NAME}/review/${searchId}?pass=${passNumber}&doc=${targetId}`;
             }
         } catch (e) {
             alert('Error: ' + e.message);

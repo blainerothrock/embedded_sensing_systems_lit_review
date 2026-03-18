@@ -20,6 +20,21 @@ from . import db
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(32)
 
+# Support running behind a reverse proxy with a URL prefix (e.g., /lit-review)
+SCRIPT_NAME = os.environ.get("SCRIPT_NAME", "")
+if SCRIPT_NAME:
+
+    class PrefixMiddleware:
+        def __init__(self, app, prefix):
+            self.app = app
+            self.prefix = prefix
+
+        def __call__(self, environ, start_response):
+            environ["SCRIPT_NAME"] = self.prefix
+            return self.app(environ, start_response)
+
+    app.wsgi_app = PrefixMiddleware(app.wsgi_app, SCRIPT_NAME)
+
 # Passcode from environment or set at runtime
 PASSCODE: str | None = os.environ.get("LIT_REVIEW_PASSCODE")
 
