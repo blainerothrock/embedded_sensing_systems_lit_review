@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Literature Review Progress</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://unpkg.com/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
+</head>
+<body>
+    <h1>Systematic Literature Review</h1>
+    <p class="subtitle">Embedded Sensing Systems — Screening Progress</p>
+
+    <!-- Top-level metrics -->
+    <div class="metrics-grid" id="top-metrics"></div>
+
+    <!-- Sankey -->
+    <div class="card">
+        <h2>Screening Flow</h2>
+        <div id="sankey-chart"></div>
+    </div>
+
+    <!-- Progress bars -->
+    <div class="two-col">
+        <div class="card">
+            <h2>Pass 1 — Title & Metadata</h2>
+            <div id="pass1-progress"></div>
+        </div>
+        <div class="card">
+            <h2>Pass 2 — Abstract Review</h2>
+            <div id="pass2-progress"></div>
+        </div>
+    </div>
+
+    <!-- Search breakdown -->
+    <div class="card">
+        <h2>Search Sources</h2>
+        <table id="search-table">
+            <thead>
+                <tr>
+                    <th>Source</th>
+                    <th class="text-right">Total</th>
+                    <th class="text-right">Include</th>
+                    <th class="text-right">Exclude</th>
+                    <th class="text-right">Uncertain</th>
+                    <th class="text-right">Rate</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <!-- LLM metrics -->
+    <div class="two-col">
+        <div class="card">
+            <h2>LLM Screening Summary</h2>
+            <table id="llm-table">
+                <thead>
+                    <tr>
+                        <th>Metric</th>
+                        <th class="text-right">Pass 1</th>
+                        <th class="text-right">Pass 2</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div class="card">
+            <h2>Exclusion Codes</h2>
+            <table id="exclusion-table">
+                <thead>
+                    <tr>
+                        <th>Code</th>
+                        <th>Description</th>
+                        <th class="text-right">P1</th>
+                        <th class="text-right">P2</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="footer" id="footer"></div>
+
+    <script>
+    fetch('data.json')
+        .then(r => r.json())
+        .then(data => {
+            renderMetrics(data);
+            renderSankey(data.sankey);
+            renderProgress(data);
+            renderSearchTable(data.search_breakdown);
+            renderLLMTable(data);
+            renderExclusionTable(data.exclusion_codes);
+            document.getElementById('footer').textContent =
+                `Generated from ${data.total_documents} papers across ${data.searches.length} searches` +
+                (data.llm_models.length ? ` · LLM: ${data.llm_models.join(', ')}` : '');
+        });
+
+    function renderMetrics(data) {
+        const container = document.getElementById('top-metrics');
+        const p2Final = (data.pass2.human.include || 0);
+        const metrics = [
+            { value: data.total_documents.toLocaleString(), label: 'Total Papers', sub: `${data.searches.length} searches` },
+            { value: data.pass1.human.include || 0, label: 'Pass 1 Include', sub: `${Math.round((data.pass1.human.include||0)/data.total_documents*100)}% rate` },
+            { value: data.pass2.human_total, label: 'Pass 2 Reviewed', sub: `${data.pass2.eligible} eligible` },
+            { value: p2Final, label: 'Final Include', sub: `${data.pass2.pending_human} pending review`, color: 'var(--color-include)' },
+            { value: data.related_count, label: 'Related', sub: 'excluded but relevant', color: 'var(--color-related)' },
+        ];
+
+        container.innerHTML = metrics.map(m => `
+            <div class="metric">
+                <div class="metric-value" ${m.color ? `style="color:${m.color}"` : ''}>${m.value}</div>
+                <div class="metric-label">${m.label}</div>
+                ${m.sub ? `<div class="metric-sub">${m.sub}</div>` : ''}
+            </div>
+        `).join('');
+    }
+
+    function renderSankey(sankey) {
+        const width = Math.min(960, document.getElementById('sankey-chart').clientWidth);
+        const height = 400;
+        const margin = { top: 10, right: 160, bottom: 10, left: 10 };
+
+        // Filter out zero-value nodes and links
+        const activeLinks = sankey.links.filter(l => l.value > 0);
+        const activeNodeIds = new Set();
+        activeLinks.forEach(l => { activeNodeIds.add(l.source); activeNodeIds.add(l.target); });
+        const activeNodes = sankey.nodes.filter(n => activeNodeIds.has(n.id));
+
+        // Map string IDs to indices
+        const nodeIndex = {};
+        activeNodes.forEach((n, i) => nodeIndex[n.id] = i);
+
+        const links = activeLinks.map(l => ({
+            source: nodeIndex[l.source],
+            target: nodeIndex[l.target],
+            value: l.value
+        }));
+
+        const sankeyGen = d3.sankey()
+            .nodeId(d => d.index)
+            .nodeWidth(20)
+            .nodePadding(16)
+            .nodeSort(null)
+            .extent([[margin.left, margin.top], [width - margin.right, height - margin.bottom]]);
+
+        const graph = sankeyGen({
+            nodes: activeNodes.map((n, i) => ({ ...n, index: i })),
+            links: links
+        });
+
+        const svg = d3.select('#sankey-chart')
+            .append('svg')
+            .attr('width', width)
+            .attr('height', height);
+
+        // Color mapping
+        function nodeColor(id) {
+            if (id.includes('include')) return 'var(--sankey-include)';
+            if (id.includes('exclude')) return 'var(--sankey-exclude)';
+            if (id.includes('uncertain')) return 'var(--sankey-uncertain)';
+            if (id.includes('pending')) return 'var(--sankey-pending)';
+            return 'var(--sankey-all)';
+        }
+
+        function linkColor(link) {
+            const targetId = graph.nodes[link.target.index]?.id || '';
+            if (targetId.includes('include')) return getComputedStyle(document.documentElement).getPropertyValue('--sankey-include').trim();
+            if (targetId.includes('exclude')) return getComputedStyle(document.documentElement).getPropertyValue('--sankey-exclude').trim();
+            if (targetId.includes('uncertain')) return getComputedStyle(document.documentElement).getPropertyValue('--sankey-uncertain').trim();
+            if (targetId.includes('pending')) return getComputedStyle(document.documentElement).getPropertyValue('--sankey-pending').trim();
+            return '#475569';
+        }
+
+        // Links
+        svg.append('g')
+            .selectAll('path')
+            .data(graph.links)
+            .join('path')
+            .attr('class', 'sankey-link')
+            .attr('d', d3.sankeyLinkHorizontal())
+            .attr('stroke', d => linkColor(d))
+            .attr('stroke-width', d => Math.max(1, d.width))
+            .attr('fill', 'none');
+
+        // Nodes
+        const node = svg.append('g')
+            .selectAll('g')
+            .data(graph.nodes)
+            .join('g')
+            .attr('class', 'sankey-node');
+
+        node.append('rect')
+            .attr('x', d => d.x0)
+            .attr('y', d => d.y0)
+            .attr('width', d => d.x1 - d.x0)
+            .attr('height', d => Math.max(1, d.y1 - d.y0))
+            .attr('fill', d => nodeColor(d.id))
+            .attr('rx', 3);
+
+        node.append('text')
+            .attr('x', d => d.x1 + 6)
+            .attr('y', d => (d.y0 + d.y1) / 2)
+            .attr('dy', '0.35em')
+            .text(d => d.label);
+    }
+
+    function renderProgress(data) {
+        // Pass 1
+        const p1 = data.pass1;
+        const p1Total = data.total_documents;
+        document.getElementById('pass1-progress').innerHTML = `
+            <div class="progress-row">
+                <span class="progress-label">Human Review</span>
+                <div class="progress-bar">
+                    <div class="progress-fill-include" style="width:${(p1.human.include||0)/p1Total*100}%"></div>
+                    <div class="progress-fill-exclude" style="width:${(p1.human.exclude||0)/p1Total*100}%"></div>
+                    <div class="progress-fill-uncertain" style="width:${(p1.human.uncertain||0)/p1Total*100}%"></div>
+                </div>
+                <span class="progress-pct">${Math.round(p1.human_total/p1Total*100)}%</span>
+            </div>
+            <div class="progress-row">
+                <span class="progress-label">LLM Screening</span>
+                <div class="progress-bar">
+                    <div class="progress-fill-include" style="width:${(p1.llm.include||0)/p1Total*100}%"></div>
+                    <div class="progress-fill-exclude" style="width:${(p1.llm.exclude||0)/p1Total*100}%"></div>
+                    <div class="progress-fill-uncertain" style="width:${(p1.llm.uncertain||0)/p1Total*100}%"></div>
+                </div>
+                <span class="progress-pct">${Math.round(p1.llm_total/p1Total*100)}%</span>
+            </div>
+            <p style="font-size:0.85rem;color:var(--color-text-secondary);margin-top:8px">
+                <span class="badge badge-include">${p1.human.include||0}</span>
+                <span class="badge badge-exclude">${p1.human.exclude||0}</span>
+                ${p1.human.uncertain ? `<span class="badge badge-uncertain">${p1.human.uncertain}</span>` : ''}
+                · ${p1.human_total}/${p1Total} reviewed
+            </p>
+        `;
+
+        // Pass 2
+        const p2 = data.pass2;
+        const p2Total = p2.eligible || 1;
+        document.getElementById('pass2-progress').innerHTML = `
+            <div class="progress-row">
+                <span class="progress-label">Human Review</span>
+                <div class="progress-bar">
+                    <div class="progress-fill-include" style="width:${(p2.human.include||0)/p2Total*100}%"></div>
+                    <div class="progress-fill-exclude" style="width:${(p2.human.exclude||0)/p2Total*100}%"></div>
+                    <div class="progress-fill-uncertain" style="width:${(p2.human.uncertain||0)/p2Total*100}%"></div>
+                </div>
+                <span class="progress-pct">${Math.round(p2.human_total/p2Total*100)}%</span>
+            </div>
+            <div class="progress-row">
+                <span class="progress-label">LLM Screening</span>
+                <div class="progress-bar">
+                    <div class="progress-fill-include" style="width:${(p2.llm.include||0)/p2Total*100}%"></div>
+                    <div class="progress-fill-exclude" style="width:${(p2.llm.exclude||0)/p2Total*100}%"></div>
+                    <div class="progress-fill-uncertain" style="width:${(p2.llm.uncertain||0)/p2Total*100}%"></div>
+                </div>
+                <span class="progress-pct">${Math.round(p2.llm_total/p2Total*100)}%</span>
+            </div>
+            <p style="font-size:0.85rem;color:var(--color-text-secondary);margin-top:8px">
+                <span class="badge badge-include">${p2.human.include||0}</span>
+                <span class="badge badge-exclude">${p2.human.exclude||0}</span>
+                ${p2.human.uncertain ? `<span class="badge badge-uncertain">${p2.human.uncertain}</span>` : ''}
+                · ${p2.human_total}/${p2.eligible} reviewed
+                · <span class="badge badge-pending">${p2.pending_human} pending</span>
+            </p>
+        `;
+    }
+
+    function renderSearchTable(breakdown) {
+        const tbody = document.querySelector('#search-table tbody');
+        let totalRow = { total: 0, include: 0, exclude: 0, uncertain: 0 };
+
+        tbody.innerHTML = breakdown.map(s => {
+            totalRow.total += s.total;
+            totalRow.include += s.include;
+            totalRow.exclude += s.exclude;
+            totalRow.uncertain += s.uncertain;
+            const rate = s.total > 0 ? Math.round(s.include / s.total * 100) : 0;
+            return `<tr>
+                <td>${s.source}</td>
+                <td class="text-right">${s.total}</td>
+                <td class="text-right">${s.include}</td>
+                <td class="text-right">${s.exclude}</td>
+                <td class="text-right">${s.uncertain || '—'}</td>
+                <td class="text-right">${rate}%</td>
+            </tr>`;
+        }).join('') + `<tr style="font-weight:600;border-top:2px solid var(--color-border)">
+            <td>Total</td>
+            <td class="text-right">${totalRow.total}</td>
+            <td class="text-right">${totalRow.include}</td>
+            <td class="text-right">${totalRow.exclude}</td>
+            <td class="text-right">${totalRow.uncertain || '—'}</td>
+            <td class="text-right">${Math.round(totalRow.include/totalRow.total*100)}%</td>
+        </tr>`;
+    }
+
+    function renderLLMTable(data) {
+        const p1 = data.pass1;
+        const p2 = data.pass2;
+        const perf = {};
+        data.llm_performance.forEach(p => perf[p.pass] = p);
+
+        const rows = [
+            ['Papers Screened', p1.llm_total, p2.llm_total],
+            ['LLM Include', p1.llm.include || 0, p2.llm.include || 0],
+            ['LLM Exclude', p1.llm.exclude || 0, p2.llm.exclude || 0],
+            ['LLM Uncertain', p1.llm.uncertain || 0, p2.llm.uncertain || 0],
+            ['Human Reviewed', p1.human_total, p2.human_total],
+            ['Agreement', `${p1.agreement}/${p1.agreement_total} (${p1.agreement_pct}%)`, `${p2.agreement}/${p2.agreement_total} (${p2.agreement_pct}%)`],
+            ['Avg Response', perf[1] ? `${(perf[1].avg_response_ms/1000).toFixed(1)}s` : '—', perf[2] ? `${(perf[2].avg_response_ms/1000).toFixed(1)}s` : '—'],
+            ['Model', data.llm_models[0] || '—', data.llm_models[1] || data.llm_models[0] || '—'],
+        ];
+
+        document.querySelector('#llm-table tbody').innerHTML = rows.map(r =>
+            `<tr><td>${r[0]}</td><td class="text-right">${r[1]}</td><td class="text-right">${r[2]}</td></tr>`
+        ).join('');
+    }
+
+    function renderExclusionTable(codes) {
+        document.querySelector('#exclusion-table tbody').innerHTML = codes
+            .filter(c => (c.pass1 + c.pass2) > 0)
+            .sort((a, b) => (b.pass1 + b.pass2) - (a.pass1 + a.pass2))
+            .map(c => `<tr>
+                <td><strong>${c.code}</strong></td>
+                <td style="font-size:0.8rem">${c.description || '—'}</td>
+                <td class="text-right">${c.pass1}</td>
+                <td class="text-right">${c.pass2}</td>
+            </tr>`).join('');
+    }
+    </script>
+</body>
+</html>
