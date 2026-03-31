@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="night">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lit Review Coding</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@5/themes.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+{% set icon = url_for('static', filename='icons.svg') %}
+<body class="h-screen overflow-hidden" x-data="app" x-init="init()" :class="{'resizing': _resizing, 'mode-hand': pdfMode === 'hand', 'mode-text': pdfMode === 'text', 'mode-box': pdfMode === 'box'}">
+
+    <!-- Navbar -->
+    <div class="navbar bg-base-200 border-b border-base-300 px-2 h-12 min-h-0">
+        <div class="flex-1 gap-2 flex items-center">
+            <!-- Sidebar toggle -->
+            <button class="btn btn-sm btn-ghost" @click="toggleSidebar()" title="Toggle paper list">
+                <svg class="w-5 h-5"><use href="{{icon}}#icon-bars-3"/></svg>
+            </button>
+            <div class="flex gap-1">
+                <button class="btn btn-xs" :class="view === 'papers' ? 'btn-primary' : 'btn-ghost'"
+                    @click="view = 'papers'">Papers</button>
+                <button class="btn btn-xs" :class="view === 'matrix' ? 'btn-primary' : 'btn-ghost'"
+                    @click="view = 'matrix'; loadMatrix()">Matrix</button>
+            </div>
+            <!-- Paper navigation -->
+            <div class="flex items-center gap-1 ml-2" x-show="view === 'papers' && papers.length > 0">
+                <button class="btn btn-xs btn-ghost" @click="prevPaper()" title="Previous paper (←)">
+                    <svg class="w-4 h-4 rotate-180"><use href="{{icon}}#icon-arrow-top-right"/></svg>
+                    ◀
+                </button>
+                <span class="text-xs opacity-60 min-w-16 text-center"
+                    x-text="selectedPaperId ? (currentPaperIndex + 1) + ' / ' + papers.length : '—'"></span>
+                <button class="btn btn-xs btn-ghost" @click="nextPaper()" title="Next paper (→)">
+                    ▶
+                </button>
+            </div>
+        </div>
+        <div class="flex-none gap-3 flex items-center">
+            <button class="btn btn-xs btn-ghost gap-1" @click="showCodeManager = true; loadCodes(); loadCodeUsageCounts()">
+                <svg class="w-4 h-4"><use href="{{icon}}#icon-plus"/></svg>
+                Codes
+            </button>
+            <div class="text-sm opacity-70" x-show="stats">
+                <span x-text="stats?.reviewed"></span>/<span x-text="stats?.total"></span> reviewed
+                · <span x-text="stats?.has_pdf"></span> PDFs
+            </div>
+            <label class="swap swap-rotate btn btn-ghost btn-sm">
+                <input type="checkbox" :checked="theme === 'light'" @change="toggleTheme()">
+                <svg class="swap-on w-5 h-5"><use href="{{icon}}#icon-sun"/></svg>
+                <svg class="swap-off w-5 h-5"><use href="{{icon}}#icon-moon"/></svg>
+            </label>
+        </div>
+    </div>
+
+    <!-- ==================== PAPERS VIEW ==================== -->
+    <div class="flex h-[calc(100vh-3rem)]" x-show="view === 'papers'">
+
+        <!-- Left Sidebar: Paper List -->
+        <div class="bg-base-200 border-r border-base-300 flex flex-col transition-all duration-200 overflow-hidden"
+             :style="sidebarOpen ? 'width:' + leftWidth + 'px;min-width:200px;max-width:600px' : 'width:0px;min-width:0px;border:none'">
+            <div class="p-2 space-y-2 border-b border-base-300">
+                <label class="input input-sm w-full flex items-center gap-2">
+                    <svg class="w-4 h-4 opacity-50"><use href="{{icon}}#icon-search"/></svg>
+                    <input type="text" placeholder="Search papers..."
+                        class="grow bg-transparent border-none outline-none text-sm"
+                        x-model="searchQuery"
+                        @input.debounce.300ms="loadPapers()">
+                </label>
+                <select class="select select-sm w-full"
+                    x-model="statusFilter" @change="loadPapers()">
+                    <option value="all">All papers</option>
+                    <option value="pending">Pending review</option>
+                    <option value="include">Included</option>
+                    <option value="exclude">Excluded</option>
+                    <option value="has_pdf">Has PDF</option>
+                    <option value="no_pdf">No PDF</option>
+                </select>
+            </div>
+            <div class="flex-1 overflow-y-auto">
+                <ul class="menu menu-sm p-1">
+                    <template x-for="paper in papers" :key="paper.id">
+                        <li>
+                            <a @click="selectPaper(paper.id)"
+                               :class="{'active': selectedPaperId === paper.id}"
+                               class="flex flex-col items-start gap-0.5 py-1.5">
+                                <span class="text-sm leading-tight line-clamp-2" x-text="paper.title || 'Untitled'"></span>
+                                <div class="flex gap-1 flex-wrap items-center">
+                                    <span class="badge badge-xs"
+                                        :class="{
+                                            'badge-success': paper.phase3_decision === 'include',
+                                            'badge-error': paper.phase3_decision === 'exclude',
+                                            'badge-warning': paper.phase3_decision === 'uncertain',
+                                            'badge-ghost': !paper.phase3_decision
+                                        }"
+                                        x-text="paper.phase3_decision || 'pending'"></span>
+                                    <span class="badge badge-xs badge-info gap-0.5" x-show="paper.pdf_path">
+                                        <svg class="w-3 h-3"><use href="{{icon}}#icon-document"/></svg>
+                                        PDF
+                                    </span>
+                                    <span class="text-xs opacity-40"
+                                        x-show="codingCompleteness[paper.id]"
+                                        x-text="codingCompleteness[paper.id] ? codingCompleteness[paper.id].filled + '/' + codingCompleteness[paper.id].total : ''"></span>
+                                </div>
+                            </a>
+                        </li>
+                    </template>
+                </ul>
+                <div class="p-4 text-center text-sm opacity-50" x-show="papers.length === 0">
+                    No papers found
+                </div>
+            </div>
+            <div class="p-2 border-t border-base-300 text-xs text-center opacity-60">
+                <span x-text="papers.length"></span> papers
+            </div>
+        </div>
+
+        <!-- Left resize handle -->
+        <div class="resize-handle" @mousedown="startResize('left', $event)"></div>
+
+        <!-- Center: PDF Viewer -->
+        <div class="flex-1 flex flex-col bg-base-300 relative"
+             @dragover.prevent="dragOver = true"
+             @dragleave.prevent="dragOver = false"
+             @drop.prevent="handleDrop($event)">
+
+            <div x-ref="pdfContainer" class="flex-1 overflow-auto flex justify-center relative"
+                 :class="{'cursor-grab': pdfMode === 'hand' && !_panning, 'cursor-grabbing': _panning}"
+                 @scroll="onPdfScroll()" @mouseup="onTextSelection($event)"
+                 @mousedown="onPdfMouseDown($event)"
+                 @dblclick="pdfFitWidth()"
+                 @wheel="onPdfWheel($event)">
+                <div x-ref="pdfPages" class="py-4 pb-16"></div>
+
+                <!-- Floating annotation toolbar with hierarchical code picker -->
+                <div class="annotation-toolbar" x-show="showAnnotationToolbar" x-transition
+                     :style="'left:' + annotationToolbarPos.x + 'px;top:' + annotationToolbarPos.y + 'px'"
+>
+                    <div class="card bg-base-100 shadow-xl border border-base-300 p-2 w-72 max-h-80 overflow-hidden">
+                        <p class="text-xs font-semibold mb-1.5 opacity-70">Tag with codes:</p>
+                        <!-- Search -->
+                        <input type="text" class="input input-xs w-full mb-1"
+                            placeholder="Search codes..."
+                            x-model="annotationToolbarSearch"
+                            @keydown.escape.stop="cancelAnnotation()">
+                        <!-- Hierarchical code list -->
+                        <div class="max-h-44 overflow-y-auto overflow-x-hidden space-y-0.5 mb-2">
+                            <template x-for="topCode in codes" :key="'at-'+topCode.id">
+                                <div x-show="codeMatchesSearch(topCode) || annotationToolbarSearch === ''">
+                                    <button class="flex items-center gap-2 w-full text-left px-1 pr-1 py-1.5 text-xs rounded hover:bg-base-200 font-semibold"
+                                        @click="toggleAnnotationCode(topCode.id)">
+                                        <div class="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                            :style="'background:' + topCode.color"></div>
+                                        <span class="flex-1" x-text="topCode.name"></span>
+                                        <svg x-show="selectedAnnotationCodes.includes(topCode.id)" class="w-3.5 h-3.5 text-success flex-shrink-0"><use href="{{icon}}#icon-check"/></svg>
+                                    </button>
+                                    <template x-for="sub in topCode.children" :key="'at-sub-'+sub.id">
+                                        <button x-show="subCodeMatchesSearch(sub, topCode) || annotationToolbarSearch === ''"
+                                            class="flex items-center gap-2 w-full text-left pl-5 pr-1 py-1 text-xs rounded hover:bg-base-200"
+                                            @click="toggleAnnotationCode(sub.id)">
+                                            <div class="w-2 h-2 rounded-full flex-shrink-0"
+                                                :style="'background:' + sub.color"></div>
+                                            <span class="flex-1" x-text="sub.name"></span>
+                                            <svg x-show="selectedAnnotationCodes.includes(sub.id)" class="w-3.5 h-3.5 text-success flex-shrink-0"><use href="{{icon}}#icon-check"/></svg>
+                                        </button>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                        <div class="flex gap-1">
+                            <button class="btn btn-xs btn-primary flex-1" @click="confirmAnnotation()">
+                                <svg class="w-3 h-3"><use href="{{icon}}#icon-check"/></svg>
+                                Save
+                            </button>
+                            <button class="btn btn-xs btn-ghost" @click="cancelAnnotation()">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Floating bottom toolbar — outside scroll container, pinned to bottom of PDF panel -->
+            <div class="absolute bottom-4 left-1/2 -translate-x-1/2 z-30" x-show="selectedPaper && pdfPageCount > 0">
+                <div class="flex items-center gap-1 bg-base-100 shadow-2xl border border-base-300 rounded-xl px-2 py-1.5">
+                    <!-- Mode buttons -->
+                    <div class="join">
+                        <button class="join-item btn btn-sm gap-1" :class="pdfMode === 'hand' ? 'btn-primary' : 'btn-ghost'"
+                            @click="setPdfMode('hand')" title="Hand tool (H)">
+                            <svg class="w-5 h-5"><use href="{{icon}}#icon-hand-raised"/></svg>
+                            <span class="text-xs hidden sm:inline">Hand</span>
+                        </button>
+                        <button class="join-item btn btn-sm gap-1" :class="pdfMode === 'text' ? 'btn-primary' : 'btn-ghost'"
+                            @click="setPdfMode('text')" title="Text select (T)">
+                            <svg class="w-5 h-5"><use href="{{icon}}#icon-pencil"/></svg>
+                            <span class="text-xs hidden sm:inline">Text</span>
+                        </button>
+                        <button class="join-item btn btn-sm gap-1" :class="pdfMode === 'box' ? 'btn-primary' : 'btn-ghost'"
+                            @click="setPdfMode('box')" title="Box select (B)">
+                            <svg class="w-5 h-5"><use href="{{icon}}#icon-square"/></svg>
+                            <span class="text-xs hidden sm:inline">Box</span>
+                        </button>
+                    </div>
+                    <div class="w-px h-6 bg-base-300 mx-1"></div>
+                    <!-- Zoom -->
+                    <button class="btn btn-sm btn-ghost" @click="pdfZoomOut()" title="Zoom out">
+                        <svg class="w-4 h-4"><use href="{{icon}}#icon-minus"/></svg>
+                    </button>
+                    <span class="text-xs min-w-12 text-center opacity-70" x-text="Math.round(pdfScale * 100) + '%'"></span>
+                    <button class="btn btn-sm btn-ghost" @click="pdfZoomIn()" title="Zoom in">
+                        <svg class="w-4 h-4"><use href="{{icon}}#icon-plus"/></svg>
+                    </button>
+                    <button class="btn btn-sm btn-ghost" @click="pdfFitWidth()" title="Fit width">
+                        <svg class="w-4 h-4"><use href="{{icon}}#icon-arrows-pointing-in"/></svg>
+                    </button>
+                    <div class="w-px h-6 bg-base-300 mx-1"></div>
+                    <!-- Page -->
+                    <span class="text-xs opacity-50 px-1" x-text="'p.' + pdfCurrentPage + '/' + pdfPageCount"></span>
+                </div>
+            </div>
+
+            <div class="absolute inset-0 flex items-center justify-center pointer-events-none"
+                 x-show="!selectedPaper || !selectedPaper.pdf_path">
+                <div class="text-center space-y-4 pointer-events-auto"
+                     :class="{'ring-2 ring-primary ring-dashed rounded-lg p-12': dragOver}">
+                    <template x-if="!selectedPaper">
+                        <p class="opacity-50">Select a paper from the list</p>
+                    </template>
+                    <template x-if="selectedPaper && !selectedPaper.pdf_path">
+                        <div class="space-y-3">
+                            <svg class="w-12 h-12 mx-auto opacity-30"><use href="{{icon}}#icon-cloud-arrow-up"/></svg>
+                            <p class="opacity-50">No PDF uploaded</p>
+                            <label class="btn btn-sm btn-primary gap-2">
+                                <svg class="w-4 h-4"><use href="{{icon}}#icon-arrow-up-tray"/></svg>
+                                Upload PDF
+                                <input type="file" accept=".pdf" class="hidden"
+                                    @change="uploadPdf($event.target.files[0])">
+                            </label>
+                            <p class="text-xs opacity-40">or drag & drop</p>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right resize handle -->
+        <div class="resize-handle" x-show="selectedPaper" @mousedown="startResize('right', $event)"></div>
+
+        <!-- Right Sidebar -->
+        <div class="bg-base-200 border-l border-base-300 flex flex-col" x-show="selectedPaper"
+             :style="'width:' + rightWidth + 'px;min-width:250px;max-width:700px'">
+            <!-- Paper Metadata -->
+            <div class="p-3 border-b border-base-300 space-y-1 max-h-48 overflow-y-auto">
+                <h3 class="font-semibold text-base leading-tight" x-text="selectedPaper?.title"></h3>
+                <p class="text-sm opacity-70 line-clamp-1" x-text="selectedPaper?.author"></p>
+                <p class="text-sm opacity-70" x-text="selectedPaper?.year"></p>
+                <a class="link link-primary text-sm inline-flex items-center gap-1"
+                   :href="selectedPaper?.doi ? 'https://doi.org/' + selectedPaper.doi : selectedPaper?.url"
+                   target="_blank" x-show="selectedPaper?.doi || selectedPaper?.url">
+                    <svg class="w-3.5 h-3.5"><use href="{{icon}}#icon-arrow-top-right"/></svg>
+                    <span x-text="selectedPaper?.doi || 'link'"></span>
+                </a>
+            </div>
+
+            <!-- Tabs -->
+            <div class="tabs tabs-border px-3 pt-1">
+                <a class="tab tab-sm gap-1" :class="{'tab-active': rightTab === 'details'}"
+                   @click="rightTab = 'details'">
+                    <svg class="w-3.5 h-3.5"><use href="{{icon}}#icon-information-circle"/></svg>
+                    Details
+                </a>
+                <a class="tab tab-sm gap-1" :class="{'tab-active': rightTab === 'screening'}"
+                   @click="rightTab = 'screening'">
+                    <svg class="w-3.5 h-3.5"><use href="{{icon}}#icon-funnel"/></svg>
+                    Screening
+                </a>
+                <a class="tab tab-sm gap-1" :class="{'tab-active': rightTab === 'annotations'}"
+                   @click="rightTab = 'annotations'; loadPaperAnnotations(); selectedAnnotation = null">
+                    <svg class="w-3.5 h-3.5"><use href="{{icon}}#icon-chat-bubble-left"/></svg>
+                    Annotations
+                </a>
+            </div>
+
+            <!-- Screening Tab -->
+            <div class="flex-1 overflow-y-auto p-3 space-y-4" x-show="rightTab === 'screening'">
+                <div class="space-y-2">
+                    <label class="text-sm font-semibold uppercase opacity-70">Decision</label>
+                    <div class="flex gap-1">
+                        <button class="btn btn-sm flex-1 gap-1"
+                            :class="reviewForm.decision === 'include' ? 'btn-success' : 'btn-ghost'"
+                            @click="reviewForm.decision = 'include'">
+                            <svg class="w-4 h-4"><use href="{{icon}}#icon-check"/></svg>
+                            Include
+                        </button>
+                        <button class="btn btn-sm flex-1 gap-1"
+                            :class="reviewForm.decision === 'exclude' ? 'btn-error' : 'btn-ghost'"
+                            @click="reviewForm.decision = 'exclude'">
+                            <svg class="w-4 h-4"><use href="{{icon}}#icon-x-mark"/></svg>
+                            Exclude
+                        </button>
+                        <button class="btn btn-sm flex-1 gap-1"
+                            :class="reviewForm.decision === 'uncertain' ? 'btn-warning' : 'btn-ghost'"
+                            @click="reviewForm.decision = 'uncertain'">
+                            <svg class="w-4 h-4"><use href="{{icon}}#icon-question-mark"/></svg>
+                            Unsure
+                        </button>
+                    </div>
+                </div>
+                <div class="space-y-2" x-show="reviewForm.decision === 'exclude'">
+                    <label class="text-sm font-semibold uppercase opacity-70">Exclusion Codes</label>
+                    <template x-for="ec in exclusionCodes" :key="ec.id">
+                        <label class="flex items-start gap-2 cursor-pointer py-0.5">
+                            <input type="checkbox" class="checkbox checkbox-xs checkbox-error mt-0.5"
+                                :value="ec.id"
+                                :checked="reviewForm.exclusion_code_ids.includes(ec.id)"
+                                @change="toggleExclusionCode(ec.id)">
+                            <span class="text-sm">
+                                <strong x-text="ec.code"></strong>:
+                                <span class="opacity-70" x-text="ec.description"></span>
+                            </span>
+                        </label>
+                    </template>
+                </div>
+                <div class="space-y-1">
+                    <label class="text-sm font-semibold uppercase opacity-70">Notes</label>
+                    <textarea class="textarea textarea-sm w-full h-24"
+                        placeholder="Review notes..."
+                        x-model="reviewForm.notes"></textarea>
+                </div>
+                <button class="btn btn-sm btn-primary w-full gap-2"
+                    :disabled="!reviewForm.decision"
+                    @click="saveReview()">
+                    <svg class="w-4 h-4"><use href="{{icon}}#icon-bookmark"/></svg>
+                    Save Review
+                </button>
+                <div x-show="selectedPaper && !selectedPaper.pdf_path" class="pt-2">
+                    <label class="btn btn-sm btn-outline w-full gap-2">
+                        <svg class="w-4 h-4"><use href="{{icon}}#icon-arrow-up-tray"/></svg>
+                        Upload PDF
+                        <input type="file" accept=".pdf" class="hidden"
+                            @change="uploadPdf($event.target.files[0])">
+                    </label>
+                </div>
+            </div>
+
+            <!-- Annotations Tab -->
+            <div class="flex-1 overflow-y-auto" x-show="rightTab === 'annotations'">
+
+                <!-- DETAIL VIEW (when an annotation is selected) -->
+                <div x-show="selectedAnnotation" class="p-3 space-y-3">
+                    <button class="btn btn-xs btn-ghost gap-1" @click="selectedAnnotation = null">
+                        <svg class="w-3.5 h-3.5"><use href="{{icon}}#icon-arrow-left"/></svg>
+                        Back to list
+                    </button>
+
+                    <div class="flex items-center gap-2 text-sm flex-wrap">
+                        <span class="badge badge-sm" x-text="selectedAnnotation?.annotation_type"></span>
+                        <span class="text-xs opacity-50" x-text="annotationRegions.length + ' region' + (annotationRegions.length !== 1 ? 's' : '')"></span>
+                        <span class="text-xs opacity-40" x-text="selectedAnnotation?.created_at ? new Date(selectedAnnotation.created_at + 'Z').toLocaleDateString() : ''"></span>
+                    </div>
+
+                    <!-- Regions list -->
+                    <div>
+                        <label class="text-xs font-semibold uppercase opacity-60">Regions</label>
+                        <div class="mt-1 space-y-1.5">
+                            <template x-for="(region, idx) in annotationRegions" :key="idx">
+                                <div class="bg-base-300 rounded p-2 text-sm">
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <span class="badge badge-xs badge-ghost">p.<span x-text="region.page"></span></span>
+                                        <template x-if="region.type === 'area'">
+                                            <span class="text-xs opacity-50">
+                                                <svg class="w-3 h-3 inline"><use href="{{icon}}#icon-square"/></svg>
+                                                area
+                                            </span>
+                                        </template>
+                                        <template x-if="region.type === 'text'">
+                                            <span class="text-xs opacity-50">
+                                                <svg class="w-3 h-3 inline"><use href="{{icon}}#icon-pencil"/></svg>
+                                                highlight
+                                            </span>
+                                        </template>
+                                    </div>
+                                    <template x-if="region.text">
+                                        <p class="text-xs italic opacity-80 leading-relaxed" x-text="region.text"></p>
+                                    </template>
+                                    <template x-if="!region.text && region.type === 'area'">
+                                        <p class="text-xs opacity-40">Area annotation</p>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Codes with relationship notes -->
+                    <div>
+                        <label class="text-xs font-semibold uppercase opacity-60">Codes</label>
+                        <div class="mt-1 space-y-2">
+                            <template x-for="c in selectedAnnotation?.codes || []" :key="c.id">
+                                <div class="bg-base-300 rounded p-2">
+                                    <div class="flex items-center gap-2">
+                                        <div class="w-2.5 h-2.5 rounded-full flex-shrink-0" :style="'background:' + c.color"></div>
+                                        <span class="text-sm font-medium flex-1" x-text="c.name"></span>
+                                        <button class="btn btn-xs btn-ghost btn-error" @click="removeAnnotationCode(selectedAnnotation.id, c.id)">
+                                            <svg class="w-3 h-3"><use href="{{icon}}#icon-x-mark"/></svg>
+                                        </button>
+                                    </div>
+                                    <textarea class="textarea textarea-xs w-full mt-1 min-h-8 h-12"
+                                        placeholder="Why this code? (optional note)"
+                                        :value="c.ac_note || ''"
+                                        @input.debounce.500ms="saveAnnotationCodeNote(selectedAnnotation.id, c.id, $event.target.value)"></textarea>
+                                </div>
+                            </template>
+
+                            <!-- Hierarchical code picker with search -->
+                            <button class="badge badge-sm badge-ghost cursor-pointer gap-1"
+                                @click="showCodePicker = !showCodePicker; codePickerSearch = ''"
+                                x-show="!showCodePicker">
+                                <svg class="w-3 h-3"><use href="{{icon}}#icon-plus"/></svg>
+                                add code
+                            </button>
+                            <div x-show="showCodePicker" x-transition
+                                 class="bg-base-100 rounded-lg border border-base-300 shadow-lg p-2 mt-1 overflow-x-hidden">
+                                <div class="flex items-center gap-1 mb-2">
+                                    <input type="text" class="input input-xs flex-1"
+                                        placeholder="Search codes..."
+                                        x-model="codePickerSearch"
+                                        @keydown.escape="showCodePicker = false"
+                                        x-ref="codePickerInput">
+                                    <button class="btn btn-xs btn-ghost" @click="showCodePicker = false">
+                                        <svg class="w-3 h-3"><use href="{{icon}}#icon-x-mark"/></svg>
+                                    </button>
+                                </div>
+                                <div class="max-h-52 overflow-y-auto space-y-0.5">
+                                    <template x-for="topCode in codes" :key="'pick-'+topCode.id">
+                                        <div x-show="codeMatchesSearch(topCode)">
+                                            <!-- Top-level code -->
+                                            <button x-show="!(selectedAnnotation?.codes || []).some(c => c.id === topCode.id)"
+                                                class="flex items-center gap-2 w-full text-left px-2 py-1.5 text-xs rounded hover:bg-base-200 font-semibold"
+                                                @click="applyCodeToSelectedAnnotation(topCode.id)">
+                                                <div class="w-2.5 h-2.5 rounded-full flex-shrink-0" :style="'background:' + topCode.color"></div>
+                                                <span x-text="topCode.name"></span>
+                                            </button>
+                                            <div x-show="!(selectedAnnotation?.codes || []).some(c => c.id === topCode.id) && topCode.description"
+                                                 class="px-2 pb-1 text-xs opacity-40 ml-5" x-text="topCode.description"></div>
+                                            <!-- Sub-codes -->
+                                            <template x-for="sub in topCode.children" :key="'pick-sub-'+sub.id">
+                                                <button x-show="!(selectedAnnotation?.codes || []).some(c => c.id === sub.id) && subCodeMatchesSearch(sub, topCode)"
+                                                    class="flex items-center gap-2 w-full text-left px-2 py-1 text-xs rounded hover:bg-base-200 ml-4"
+                                                    @click="applyCodeToSelectedAnnotation(sub.id)">
+                                                    <div class="w-2 h-2 rounded-full flex-shrink-0" :style="'background:' + sub.color"></div>
+                                                    <span x-text="sub.name"></span>
+                                                </button>
+                                            </template>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Notes -->
+                    <div>
+                        <label class="text-xs font-semibold uppercase opacity-60">Notes</label>
+                        <textarea class="textarea textarea-sm w-full min-h-24 mt-1 resize-y"
+                            placeholder="Free-form notes, thoughts, writing plans..."
+                            :value="selectedAnnotation?.note || ''"
+                            @input.debounce.500ms="saveAnnotationNote(selectedAnnotation.id, $event.target.value)"
+                            @keydown.escape.prevent="selectedAnnotation = null"></textarea>
+                    </div>
+
+                    <!-- Actions -->
+                    <div class="flex gap-2">
+                        <button class="btn btn-xs btn-ghost gap-1" @click="startAddRegion()"
+                            title="Add another highlight region to this annotation">
+                            <svg class="w-3.5 h-3.5"><use href="{{icon}}#icon-plus"/></svg>
+                            Add region
+                        </button>
+                        <div class="flex-1"></div>
+                        <button class="btn btn-xs btn-error btn-ghost" @click="deleteAnnotation(selectedAnnotation.id); selectedAnnotation = null">
+                            <svg class="w-3.5 h-3.5"><use href="{{icon}}#icon-x-mark"/></svg>
+                            Delete
+                        </button>
+                    </div>
+                </div>
+
+                <!-- LIST VIEW (default) -->
+                <div x-show="!selectedAnnotation" class="p-3 space-y-2">
+                    <div class="flex items-center gap-2">
+                        <label class="text-sm font-semibold uppercase opacity-70 flex-1">
+                            Annotations (<span x-text="paperAnnotations.length"></span>)
+                        </label>
+                    </div>
+
+                    <template x-for="ann in paperAnnotations" :key="ann.id">
+                        <div class="p-2 bg-base-300 rounded-lg text-sm space-y-1.5 cursor-pointer hover:bg-base-200 transition-colors"
+                             @click="openAnnotationDetail(ann)">
+                            <div class="flex items-start gap-2">
+                                <span class="badge badge-xs badge-ghost flex-shrink-0">p.<span x-text="ann.page_number"></span></span>
+                                <p class="flex-1 text-xs italic opacity-80 line-clamp-2" x-text="ann.selected_text || ann.note || '(area annotation)'"></p>
+                            </div>
+                            <div class="flex flex-wrap gap-1">
+                                <template x-for="c in ann.codes" :key="c.id">
+                                    <span class="badge badge-xs" :style="'background:' + c.color + '33; color:' + c.color + '; border-color:' + c.color"
+                                        x-text="c.name"></span>
+                                </template>
+                            </div>
+                            <p class="text-xs opacity-50 line-clamp-1" x-show="ann.note" x-text="'📝 ' + ann.note"></p>
+                        </div>
+                    </template>
+
+                    <div x-show="paperAnnotations.length === 0">
+                        <p class="text-sm opacity-50 text-center py-4">No annotations yet. Highlight text in the PDF or use the box tool.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Details Tab -->
+            <div class="flex-1 overflow-y-auto p-3 space-y-3 text-sm" x-show="rightTab === 'details'">
+                <!-- Authors -->
+                <div x-show="selectedPaper?.author">
+                    <label class="font-semibold uppercase opacity-60 text-xs">Authors</label>
+                    <p class="mt-0.5 leading-relaxed" x-text="selectedPaper?.author"></p>
+                </div>
+                <!-- Venue & Year -->
+                <div class="flex gap-4">
+                    <div x-show="selectedPaper?.year" class="flex-shrink-0">
+                        <label class="font-semibold uppercase opacity-60 text-xs">Year</label>
+                        <p class="mt-0.5" x-text="selectedPaper?.year"></p>
+                    </div>
+                    <div x-show="selectedPaper?.entry_type" class="flex-shrink-0">
+                        <label class="font-semibold uppercase opacity-60 text-xs">Type</label>
+                        <p class="mt-0.5" x-text="selectedPaper?.entry_type"></p>
+                    </div>
+                </div>
+                <div x-show="selectedPaper?.venue">
+                    <label class="font-semibold uppercase opacity-60 text-xs">Venue</label>
+                    <p class="mt-0.5 leading-snug" x-text="selectedPaper?.venue"></p>
+                </div>
+                <!-- DOI / URL -->
+                <div x-show="selectedPaper?.doi || selectedPaper?.url">
+                    <label class="font-semibold uppercase opacity-60 text-xs">DOI / Link</label>
+                    <div class="mt-0.5">
+                        <a class="link link-primary inline-flex items-center gap-1"
+                           :href="selectedPaper?.doi ? 'https://doi.org/' + selectedPaper.doi : selectedPaper?.url"
+                           target="_blank">
+                            <svg class="w-3.5 h-3.5 flex-shrink-0"><use href="{{icon}}#icon-arrow-top-right"/></svg>
+                            <span x-text="selectedPaper?.doi || selectedPaper?.url"></span>
+                        </a>
+                    </div>
+                </div>
+                <!-- BibTeX Key -->
+                <div x-show="selectedPaper?.bibtex_key">
+                    <label class="font-semibold uppercase opacity-60 text-xs">BibTeX Key</label>
+                    <p class="mt-0.5 font-mono text-xs opacity-70" x-text="selectedPaper?.bibtex_key"></p>
+                </div>
+                <!-- Keywords -->
+                <div x-show="selectedPaper?.keywords">
+                    <label class="font-semibold uppercase opacity-60 text-xs">Keywords</label>
+                    <div class="mt-1 flex flex-wrap gap-1">
+                        <template x-for="kw in (selectedPaper?.keywords || '').split(',').map(k => k.trim()).filter(k => k)">
+                            <span class="badge badge-sm badge-ghost" x-text="kw"></span>
+                        </template>
+                    </div>
+                </div>
+                <!-- Abstract -->
+                <div x-show="selectedPaper?.abstract">
+                    <label class="font-semibold uppercase opacity-60 text-xs">Abstract</label>
+                    <p class="mt-1 opacity-80 leading-relaxed" x-text="selectedPaper?.abstract"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== MATRIX VIEW ==================== -->
+    <div class="h-[calc(100vh-3rem)] overflow-auto p-4" x-show="view === 'matrix'">
+        <template x-if="matrixData">
+            <div class="overflow-x-auto">
+                <table class="table table-xs table-pin-rows table-pin-cols">
+                    <thead>
+                        <tr>
+                            <th class="bg-base-200 z-20">Paper</th>
+                            <th class="bg-base-200">Year</th>
+                            <template x-for="code in matrixData.codes" :key="'h-'+code.id">
+                                <th class="bg-base-200 text-center min-w-28">
+                                    <div class="flex flex-col items-center gap-0.5">
+                                        <div class="w-2 h-2 rounded-full" :style="'background:' + code.color"></div>
+                                        <span x-text="code.name"></span>
+                                        <span class="text-xs opacity-40" x-show="code.children.length > 0"
+                                            x-text="code.children.map(c => c.name).join(', ')"></span>
+                                    </div>
+                                </th>
+                            </template>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="paper in matrixData.papers" :key="paper.id">
+                            <tr class="hover">
+                                <td class="max-w-xs truncate bg-base-200 z-10 cursor-pointer"
+                                    @click="view = 'papers'; selectPaper(paper.id)"
+                                    x-text="paper.title"></td>
+                                <td class="bg-base-200" x-text="paper.year"></td>
+                                <template x-for="code in matrixData.codes" :key="'c-'+code.id+'-'+paper.id">
+                                    <td class="text-center p-1" @click.stop>
+                                        <!-- Select dropdown if code has sub-codes -->
+                                        <template x-if="code.children.length > 0">
+                                            <select class="select select-xs w-full max-w-28"
+                                                :value="matrixData.cells[paper.id]?.[code.id]?.value || ''"
+                                                @change="saveMatrixCell(paper.id, code.id, $event.target.value)">
+                                                <option value="">—</option>
+                                                <template x-for="sub in code.children" :key="sub.id">
+                                                    <option :value="sub.name" x-text="sub.name"></option>
+                                                </template>
+                                            </select>
+                                        </template>
+                                        <!-- Free text if no sub-codes -->
+                                        <template x-if="code.children.length === 0">
+                                            <input type="text" class="input input-xs w-full max-w-28 text-center"
+                                                placeholder="—"
+                                                :value="matrixData.cells[paper.id]?.[code.id]?.value || ''"
+                                                @change="saveMatrixCell(paper.id, code.id, $event.target.value)">
+                                        </template>
+                                        <!-- Evidence count badge -->
+                                        <span class="badge badge-xs badge-ghost mt-0.5"
+                                            x-show="matrixData.evidence[paper.id]?.[code.id]"
+                                            x-text="(matrixData.evidence[paper.id]?.[code.id] || 0) + ' ann.'"></span>
+                                    </td>
+                                </template>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </template>
+        <div x-show="!matrixData" class="text-center py-12 opacity-50">Loading matrix...</div>
+    </div>
+
+    <!-- ==================== CODE BUILDER MODAL ==================== -->
+    <dialog class="modal" :class="{'modal-open': showCodeManager}">
+        <div class="modal-box max-w-3xl max-h-[85vh]">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-bold">Code Builder</h3>
+                <button class="btn btn-sm btn-ghost" @click="showCodeManager = false">
+                    <svg class="w-5 h-5"><use href="{{icon}}#icon-x-mark"/></svg>
+                </button>
+            </div>
+
+            <!-- Create top-level code -->
+            <div class="flex gap-2 mb-4">
+                <input type="text" class="input input-sm flex-1" placeholder="New top-level code (= matrix column)..."
+                    x-model="newCodeName" @keydown.enter="createTopCode()">
+                <button class="btn btn-sm btn-primary" @click="createTopCode()" :disabled="!newCodeName.trim()">
+                    <svg class="w-4 h-4"><use href="{{icon}}#icon-plus"/></svg>
+                    Add Code
+                </button>
+            </div>
+
+            <!-- Code tree -->
+            <div class="space-y-4 overflow-y-auto max-h-[60vh]">
+                <template x-for="(code, cIdx) in codes" :key="code.id">
+                    <div class="bg-base-200 rounded-lg p-3">
+                        <!-- Top-level code header -->
+                        <div class="flex items-center gap-2">
+                            <input type="color" class="w-5 h-5 cursor-pointer rounded border-0 flex-shrink-0"
+                                :value="code.color"
+                                @change="updateCode(code.id, {color: $event.target.value})">
+                            <input type="text" class="input input-sm input-ghost font-semibold flex-1 px-1"
+                                :value="code.name"
+                                @change="updateCode(code.id, {name: $event.target.value})">
+                            <span class="badge badge-xs opacity-50 flex-shrink-0"
+                                x-text="(codeUsageCounts[code.id] || 0) + ' ann.'"></span>
+                            <span class="badge badge-xs badge-ghost flex-shrink-0">matrix col</span>
+                            <!-- Reorder -->
+                            <button class="btn btn-xs btn-ghost" @click="reorderCode(code.id, -1)" :disabled="cIdx === 0" title="Move up">↑</button>
+                            <button class="btn btn-xs btn-ghost" @click="reorderCode(code.id, 1)" :disabled="cIdx === codes.length - 1" title="Move down">↓</button>
+                            <button class="btn btn-xs btn-ghost btn-error flex-shrink-0"
+                                @click="deleteCode(code.id)"
+                                :disabled="code.children.length > 0 || (codeUsageCounts[code.id] || 0) > 0"
+                                title="Delete (must have no sub-codes or annotations)">
+                                <svg class="w-3 h-3"><use href="{{icon}}#icon-x-mark"/></svg>
+                            </button>
+                        </div>
+                        <!-- Description -->
+                        <div class="mt-1 ml-7">
+                            <textarea class="textarea textarea-xs w-full h-12 opacity-70"
+                                placeholder="Description (optional)..."
+                                :value="code.description || ''"
+                                @change="updateCode(code.id, {description: $event.target.value})"></textarea>
+                        </div>
+
+                        <!-- Sub-codes -->
+                        <div class="mt-2 ml-7 space-y-1">
+                            <template x-for="(sub, sIdx) in code.children" :key="sub.id">
+                                <div class="flex items-center gap-2 text-sm">
+                                    <input type="color" class="w-4 h-4 cursor-pointer rounded border-0 flex-shrink-0"
+                                        :value="sub.color"
+                                        @change="updateCode(sub.id, {color: $event.target.value})">
+                                    <input type="text" class="input input-xs input-ghost flex-1 px-1"
+                                        :value="sub.name"
+                                        @change="updateCode(sub.id, {name: $event.target.value})">
+                                    <span class="text-xs opacity-40 flex-shrink-0"
+                                        x-text="(codeUsageCounts[sub.id] || 0) + ' ann.'"></span>
+                                    <button class="btn btn-xs btn-ghost" @click="reorderCode(sub.id, -1)" :disabled="sIdx === 0">↑</button>
+                                    <button class="btn btn-xs btn-ghost" @click="reorderCode(sub.id, 1)" :disabled="sIdx === code.children.length - 1">↓</button>
+                                    <button class="btn btn-xs btn-ghost btn-error"
+                                        @click="deleteCode(sub.id)"
+                                        :disabled="(codeUsageCounts[sub.id] || 0) > 0">
+                                        <svg class="w-3 h-3"><use href="{{icon}}#icon-x-mark"/></svg>
+                                    </button>
+                                </div>
+                            </template>
+                            <p class="text-xs opacity-40" x-show="code.children.length > 0">Sub-codes = dropdown options in the matrix</p>
+                            <p class="text-xs opacity-40" x-show="code.children.length === 0">No sub-codes = free text in the matrix</p>
+                        </div>
+
+                        <!-- Add sub-code -->
+                        <div class="flex gap-2 mt-2 ml-7">
+                            <input type="text" class="input input-xs flex-1" placeholder="New sub-code..."
+                                x-model="newSubCodeNames[code.id]"
+                                @keydown.enter="createSubCode(code.id)">
+                            <button class="btn btn-xs btn-ghost"
+                                @click="createSubCode(code.id)"
+                                :disabled="!newSubCodeNames[code.id]?.trim()">
+                                <svg class="w-3 h-3"><use href="{{icon}}#icon-plus"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button @click="showCodeManager = false">close</button>
+        </form>
+    </dialog>
+
+    <!-- Toast notifications -->
+    <div class="toast toast-end toast-bottom" x-show="toast" x-transition>
+        <div class="alert" :class="'alert-' + toastType">
+            <span x-text="toast"></span>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+</body>
+</html>

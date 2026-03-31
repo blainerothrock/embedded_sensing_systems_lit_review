@@ -1,0 +1,142 @@
+/* PDF text layer */
+.textLayer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 3;
+    overflow: hidden;
+}
+
+.textLayer span,
+.textLayer br {
+    color: transparent;
+    position: absolute;
+    white-space: pre;
+    pointer-events: all;
+    cursor: text;
+    transform-origin: 0% 0%;
+}
+
+.textLayer span::selection,
+.textLayer br::selection {
+    background: rgba(0, 100, 246, 0.3);
+}
+
+/* PDF mode cursors */
+body.mode-hand .textLayer {
+    pointer-events: none !important;
+}
+
+body.mode-box .textLayer {
+    pointer-events: none !important;
+}
+
+body.mode-box .pdf-annotation-layer {
+    pointer-events: auto;
+    cursor: crosshair;
+}
+
+body.mode-box .pdf-page canvas {
+    cursor: crosshair;
+}
+
+/* PDF page styling */
+.pdf-page {
+    background: white;
+    margin: 0 auto;
+}
+
+.pdf-page canvas {
+    display: block;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: oklch(var(--bc) / 0.2);
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: oklch(var(--bc) / 0.3);
+}
+
+/* Resize handles */
+.resize-handle {
+    width: 4px;
+    cursor: col-resize;
+    background: transparent;
+    transition: background 0.15s;
+    flex-shrink: 0;
+    z-index: 10;
+}
+
+.resize-handle:hover,
+.resize-handle.active {
+    background: oklch(var(--p));
+}
+
+/* Prevent text selection while resizing */
+body.resizing {
+    cursor: col-resize !important;
+    user-select: none;
+}
+
+/* Annotation overlay layer — below text layer so text is still selectable */
+.pdf-annotation-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.pdf-highlight {
+    position: absolute;
+    pointer-events: none;
+    border-radius: 2px;
+    transition: opacity 0.15s;
+}
+
+.pdf-highlight:hover,
+.pdf-area:hover {
+    opacity: 0.8;
+    outline: 1px solid currentColor;
+}
+
+.pdf-area {
+    position: absolute;
+    pointer-events: none;
+    border-radius: 3px;
+}
+
+.pdf-box-drawing {
+    position: absolute;
+    border: 2px dashed #3B82F6;
+    background: rgba(59, 130, 246, 0.1);
+    pointer-events: none;
+    z-index: 10;
+}
+
+/* Floating annotation toolbar */
+.annotation-toolbar {
+    position: absolute;
+    z-index: 50;
+    transform: translateX(-50%);
+}
+
+/* Line clamp utility */
+.line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}

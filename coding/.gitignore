@@ -1,0 +1,6 @@
+pdfs/
+lit_review.db
+lit_review.db.bak
+__pycache__/
+*.pyc
+.venv/
