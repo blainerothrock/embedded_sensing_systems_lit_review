@@ -437,6 +437,16 @@ html, body {
     color: var(--text-primary);
 }
 
+.llm-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
 .llm-decision {
     padding: 4px 8px;
     border-radius: 4px;
@@ -780,6 +790,37 @@ html, body {
 .badge-include { background: var(--color-include); color: white; }
 .badge-exclude { background: var(--color-exclude); color: white; }
 .badge-uncertain { background: var(--color-uncertain); color: black; }
+.badge-related { background: #6366f1; color: white; }
+
+.current-decision-inline {
+    margin: 6px 0;
+}
+.current-decision-inline .exclusion-codes {
+    font-size: 0.85rem;
+    color: var(--text-secondary, #888);
+    margin-left: 6px;
+}
+
+/* Related toggle in review view */
+.related-section {
+    padding: 8px 16px;
+}
+.related-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+.related-toggle input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: #6366f1;
+}
+.related-hint {
+    color: var(--text-secondary, #888);
+    font-size: 0.8rem;
+}
 
 .paper-card .paper-title {
     font-size: 15px;
