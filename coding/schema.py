@@ -14,6 +14,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     _create_coding_tables(conn)
     _migrate_annotation_code_note(conn)
     _create_matrix_column_tables(conn)
+    _create_chat_tables(conn)
     conn.commit()
 
 
@@ -249,5 +250,48 @@ def _create_matrix_column_tables(conn: sqlite3.Connection) -> None:
         )
     """)
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_matrix_cell_document ON matrix_cell(document_id)"
+        "CREATE INDEX IF NOT EXISTS idx_matrix_cell_v2_document ON matrix_cell(document_id)"
+    )
+
+
+def _create_chat_tables(conn: sqlite3.Connection) -> None:
+    """Create tables for per-paper chat conversations."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS paper_chat (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id INTEGER NOT NULL,
+            title TEXT,
+            provider TEXT NOT NULL DEFAULT 'ollama',
+            model TEXT NOT NULL DEFAULT 'qwen3.5:9b',
+            params TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (document_id) REFERENCES document(id)
+        )
+    """)
+    # Migrate existing paper_chat rows if provider column missing
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(paper_chat)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if "provider" not in columns:
+        conn.execute("ALTER TABLE paper_chat ADD COLUMN provider TEXT NOT NULL DEFAULT 'ollama'")
+    if "params" not in columns:
+        conn.execute("ALTER TABLE paper_chat ADD COLUMN params TEXT")
+    if "system_prompt" not in columns:
+        conn.execute("ALTER TABLE paper_chat ADD COLUMN system_prompt TEXT")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_message (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (chat_id) REFERENCES paper_chat(id) ON DELETE CASCADE
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_paper_chat_document ON paper_chat(document_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_message_chat ON chat_message(chat_id)"
     )

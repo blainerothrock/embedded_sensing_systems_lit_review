@@ -49,6 +49,12 @@
                 <svg class="w-4 h-4"><use href="{{icon}}#icon-plus"/></svg>
                 Columns
             </button>
+            <button class="btn btn-xs gap-1" :class="showChat ? 'btn-secondary' : 'btn-ghost'"
+                @click="toggleChat()" x-show="view === 'papers' && selectedPaper"
+                title="Chat with paper">
+                <svg class="w-4 h-4"><use href="{{icon}}#icon-chat-bubble-left"/></svg>
+                Chat
+            </button>
             <div class="text-sm opacity-70" x-show="stats">
                 <span x-text="stats?.reviewed"></span>/<span x-text="stats?.total"></span> reviewed
                 · <span x-text="stats?.has_pdf"></span> PDFs
@@ -64,8 +70,9 @@
     <!-- ==================== PAPERS VIEW ==================== -->
     <div class="flex h-[calc(100vh-3rem)]" x-show="view === 'papers'">
 
-        <!-- Left Sidebar: Paper List -->
+        <!-- Left Sidebar: Paper List (hidden when chat is open) -->
         <div class="bg-base-200 border-r border-base-300 flex flex-col transition-all duration-200 overflow-hidden"
+             x-show="!showChat"
              :style="sidebarOpen ? 'width:' + leftWidth + 'px;min-width:200px;max-width:600px' : 'width:0px;min-width:0px;border:none'">
             <div class="p-2 space-y-2 border-b border-base-300">
                 <label class="input input-sm w-full flex items-center gap-2">
@@ -121,6 +128,135 @@
             </div>
             <div class="p-2 border-t border-base-300 text-xs text-center opacity-60">
                 <span x-text="papers.length"></span> papers
+            </div>
+        </div>
+
+        <!-- Left Sidebar: Chat Panel (shown when chat is open) -->
+        <div class="bg-base-200 border-r border-base-300 flex flex-col"
+             x-show="showChat"
+             :style="'width:' + leftWidth + 'px;min-width:200px;max-width:600px'">
+
+            <!-- Chat header -->
+            <div class="p-2 border-b border-base-300 space-y-2">
+                <div class="flex items-center gap-2">
+                    <h3 class="font-semibold text-sm flex-1">Chat</h3>
+                    <button class="btn btn-xs btn-ghost" @click="newChat()" title="New conversation">
+                        <svg class="w-4 h-4"><use href="{{icon}}#icon-plus"/></svg>
+                    </button>
+                    <button class="btn btn-xs btn-ghost" @click="toggleChat()" title="Close chat">
+                        <svg class="w-4 h-4"><use href="{{icon}}#icon-x-mark"/></svg>
+                    </button>
+                </div>
+                <!-- Provider + Model selector -->
+                <div class="space-y-1">
+                    <select class="select select-xs w-full" x-model="chatProvider" :disabled="chatId !== null">
+                        <option value="ollama">Ollama</option>
+                        <option value="claude">Claude (via CLI)</option>
+                    </select>
+                    <select class="select select-xs w-full" x-model="chatModel"
+                        :disabled="chatId !== null" x-show="chatProvider === 'ollama'">
+                        <template x-for="m in llmModels.ollama" :key="m">
+                            <option :value="m" x-text="m"></option>
+                        </template>
+                    </select>
+                </div>
+                <!-- Conversation selector -->
+                <div class="flex items-center gap-1" x-show="chatList.length > 0">
+                    <select class="select select-xs flex-1"
+                        :value="chatId || ''"
+                        @change="if ($event.target.value) loadChatMessages(parseInt($event.target.value)); else newChat()">
+                        <option value="">New conversation</option>
+                        <template x-for="c in chatList" :key="c.id">
+                            <option :value="c.id" :selected="c.id === chatId"
+                                x-text="(c.title || 'Chat ' + c.id) + ' (' + (c.provider === 'claude' ? 'Claude' : c.model) + ')'"></option>
+                        </template>
+                    </select>
+                    <button class="btn btn-xs btn-ghost btn-error" x-show="chatId"
+                        @click="if (confirm('Delete this conversation?')) deleteChat(chatId)">
+                        <svg class="w-3 h-3"><use href="{{icon}}#icon-x-mark"/></svg>
+                    </button>
+                </div>
+                <!-- Params toggle -->
+                <button class="btn btn-xs btn-ghost w-full gap-1" @click="showChatParams = !showChatParams"
+                    x-show="chatProvider === 'ollama' && !chatId">
+                    <svg class="w-3 h-3" :class="showChatParams ? 'rotate-90' : ''"><use href="{{icon}}#icon-arrow-top-right"/></svg>
+                    Parameters
+                </button>
+                <div x-show="showChatParams && chatProvider === 'ollama' && !chatId" x-transition class="space-y-1.5 text-xs">
+                    <div class="flex items-center gap-2">
+                        <label class="w-24 opacity-60">temperature</label>
+                        <input type="range" class="range range-xs flex-1" min="0" max="2" step="0.1" x-model.number="chatParams.temperature">
+                        <span class="w-8 text-right" x-text="chatParams.temperature"></span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <label class="w-24 opacity-60">top_k</label>
+                        <input type="number" class="input input-xs w-20" x-model.number="chatParams.top_k">
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <label class="w-24 opacity-60">top_p</label>
+                        <input type="range" class="range range-xs flex-1" min="0" max="1" step="0.05" x-model.number="chatParams.top_p">
+                        <span class="w-8 text-right" x-text="chatParams.top_p"></span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <label class="w-24 opacity-60">num_ctx</label>
+                        <input type="number" class="input input-xs w-20" x-model.number="chatParams.num_ctx">
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <label class="w-24 opacity-60">num_predict</label>
+                        <input type="number" class="input input-xs w-20" x-model.number="chatParams.num_predict">
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <label class="w-24 opacity-60">presence_pen</label>
+                        <input type="range" class="range range-xs flex-1" min="0" max="2" step="0.1" x-model.number="chatParams.presence_penalty">
+                        <span class="w-8 text-right" x-text="chatParams.presence_penalty"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Messages -->
+            <div class="flex-1 overflow-y-auto p-3 space-y-3" x-ref="chatMessages">
+                <template x-for="msg in chatMessages" :key="msg.id">
+                    <div :class="msg.role === 'user' ? 'chat chat-end' : 'chat chat-start'">
+                        <div class="chat-bubble text-sm"
+                             :class="msg.role === 'user' ? 'chat-bubble-primary' : 'chat-bubble'"
+                             x-html="msg.role === 'assistant' ? renderChatContent(msg.content) : escapeHtml(msg.content)">
+                        </div>
+                    </div>
+                </template>
+
+                <!-- Streaming response -->
+                <div class="chat chat-start" x-show="chatStreamContent">
+                    <div class="chat-bubble text-sm" x-html="renderChatContent(chatStreamContent)"></div>
+                </div>
+
+                <!-- Loading indicator -->
+                <div class="chat chat-start" x-show="chatLoading && !chatStreamContent">
+                    <div class="chat-bubble text-sm">
+                        <span class="loading loading-dots loading-sm"></span>
+                    </div>
+                </div>
+
+                <!-- Empty state -->
+                <div x-show="chatMessages.length === 0 && !chatLoading" class="text-center py-8 opacity-50 text-sm">
+                    <p>Ask questions about this paper.</p>
+                    <p class="text-xs mt-1">The LLM has the full text, your codes, and existing annotations as context.</p>
+                </div>
+            </div>
+
+            <!-- Input -->
+            <div class="p-2 border-t border-base-300">
+                <div class="flex gap-1">
+                    <textarea class="textarea textarea-sm flex-1 min-h-10 max-h-32 resize-y"
+                        placeholder="Ask about this paper..."
+                        x-model="chatInput"
+                        @keydown.enter.prevent="if (!$event.shiftKey) sendChatMessage()"
+                        :disabled="chatLoading || !selectedPaper?.pdf_path"></textarea>
+                    <button class="btn btn-sm btn-primary self-end"
+                        @click="sendChatMessage()"
+                        :disabled="chatLoading || !chatInput.trim()">
+                        <svg class="w-4 h-4"><use href="{{icon}}#icon-arrow-top-right"/></svg>
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -698,6 +834,7 @@
                 </div>
             </div>
         </div>
+
     </div>
 
     <!-- ==================== MATRIX VIEW ==================== -->
@@ -954,7 +1091,7 @@
 
     <!-- ==================== CODE BUILDER MODAL ==================== -->
     <dialog class="modal" :class="{'modal-open': showCodeManager}">
-        <div class="modal-box max-w-3xl max-h-[85vh]">
+        <div class="modal-box max-w-3xl max-h-[85vh] overflow-x-hidden">
             <div class="flex items-center justify-between mb-4">
                 <h3 class="text-lg font-bold">Code Builder</h3>
                 <button class="btn btn-sm btn-ghost" @click="showCodeManager = false">
@@ -1007,22 +1144,28 @@
                         <!-- Sub-codes -->
                         <div class="mt-2 ml-7 space-y-1">
                             <template x-for="(sub, sIdx) in code.children" :key="sub.id">
-                                <div class="flex items-center gap-2 text-sm">
-                                    <input type="color" class="w-4 h-4 cursor-pointer rounded border-0 flex-shrink-0"
-                                        :value="sub.color"
-                                        @change="updateCode(sub.id, {color: $event.target.value})">
-                                    <input type="text" class="input input-xs input-ghost flex-1 px-1"
-                                        :value="sub.name"
-                                        @change="updateCode(sub.id, {name: $event.target.value})">
-                                    <span class="text-xs opacity-40 flex-shrink-0"
-                                        x-text="(codeUsageCounts[sub.id] || 0) + ' ann.'"></span>
-                                    <button class="btn btn-xs btn-ghost" @click="reorderCode(sub.id, -1)" :disabled="sIdx === 0">↑</button>
-                                    <button class="btn btn-xs btn-ghost" @click="reorderCode(sub.id, 1)" :disabled="sIdx === code.children.length - 1">↓</button>
-                                    <button class="btn btn-xs btn-ghost btn-error"
-                                        @click="deleteCode(sub.id)"
-                                        :disabled="(codeUsageCounts[sub.id] || 0) > 0">
-                                        <svg class="w-3 h-3"><use href="{{icon}}#icon-x-mark"/></svg>
-                                    </button>
+                                <div class="space-y-1">
+                                    <div class="flex items-center gap-2 text-sm">
+                                        <input type="color" class="w-4 h-4 cursor-pointer rounded border-0 flex-shrink-0"
+                                            :value="sub.color"
+                                            @change="updateCode(sub.id, {color: $event.target.value})">
+                                        <input type="text" class="input input-xs input-ghost flex-1 px-1"
+                                            :value="sub.name"
+                                            @change="updateCode(sub.id, {name: $event.target.value})">
+                                        <span class="text-xs opacity-40 flex-shrink-0"
+                                            x-text="(codeUsageCounts[sub.id] || 0) + ' ann.'"></span>
+                                        <button class="btn btn-xs btn-ghost" @click="reorderCode(sub.id, -1)" :disabled="sIdx === 0">↑</button>
+                                        <button class="btn btn-xs btn-ghost" @click="reorderCode(sub.id, 1)" :disabled="sIdx === code.children.length - 1">↓</button>
+                                        <button class="btn btn-xs btn-ghost btn-error"
+                                            @click="deleteCode(sub.id)"
+                                            :disabled="(codeUsageCounts[sub.id] || 0) > 0">
+                                            <svg class="w-3 h-3"><use href="{{icon}}#icon-x-mark"/></svg>
+                                        </button>
+                                    </div>
+                                    <input type="text" class="input input-xs w-full ml-6 opacity-70"
+                                        placeholder="Description (for LLM context)..."
+                                        :value="sub.description || ''"
+                                        @change="updateCode(sub.id, {description: $event.target.value})">
                                 </div>
                             </template>
                         </div>

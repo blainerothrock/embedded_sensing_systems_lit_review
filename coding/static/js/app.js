@@ -82,6 +82,28 @@ document.addEventListener("alpine:init", () => {
         // Per-paper summary
         paperSummary: [],
 
+        // Chat
+        showChat: false,
+        chatMessages: [],
+        chatInput: "",
+        chatId: null,
+        chatList: [],
+        chatLoading: false,
+        chatStreamContent: "",
+        chatProvider: "ollama",
+        chatModel: "",           // set after loading models
+        llmModels: { ollama: [], claude: true },
+        showChatParams: false,
+        chatParams: {
+            num_ctx: 32768,
+            num_predict: 2048,
+            temperature: 0.6,
+            top_k: 20,
+            top_p: 0.95,
+            presence_penalty: 1.5,
+        },
+        _chatAbortController: null,
+
         // Annotation state
         selectedAnnotation: null,    // annotation detail view
         annotationReturnTab: null,   // tab to return to from annotation detail
@@ -158,6 +180,7 @@ document.addEventListener("alpine:init", () => {
                 this.loadCodingCompleteness(),
                 this.loadCodeUsageCounts(),
                 this.loadMatrixColumns(),
+                this.loadLlmModels(),
             ]);
 
             // Auto-select first paper on load
@@ -230,12 +253,20 @@ document.addEventListener("alpine:init", () => {
                 this.clearPdf();
             }
 
+            // Reset chat for new paper
+            this.abortChat();
+            this.chatId = null;
+            this.chatMessages = [];
+            this.chatList = [];
+
             // Load annotations, matrix cells, and summary for this paper
-            await Promise.all([
+            const loads = [
                 this.loadPaperAnnotations(),
                 this.loadPaperMatrixCells(),
                 this.loadPaperSummary(),
-            ]);
+            ];
+            if (this.showChat) loads.push(this.loadChats());
+            await Promise.all(loads);
         },
 
         // --- PDF ---
@@ -1361,6 +1392,258 @@ document.addEventListener("alpine:init", () => {
             const res = await fetch(`api/papers/${this.selectedPaperId}/summary`);
             if (!res.ok) return;
             this.paperSummary = await res.json();
+        },
+
+        // --- Chat ---
+
+        async loadLlmModels() {
+            const res = await fetch("api/llm/models");
+            if (!res.ok) return;
+            const data = await res.json();
+            this.llmModels = { ollama: data.ollama || [], claude: data.claude };
+            if (data.default_params) {
+                this.chatParams = { ...this.chatParams, ...data.default_params };
+            }
+            // Auto-select first Ollama model if none set
+            if (!this.chatModel && this.llmModels.ollama.length > 0) {
+                this.chatModel = this.llmModels.ollama[0];
+            }
+        },
+
+        abortChat() {
+            if (this._chatAbortController) {
+                this._chatAbortController.abort();
+                this._chatAbortController = null;
+            }
+            this.chatLoading = false;
+            this.chatStreamContent = "";
+        },
+
+        toggleChat() {
+            this.showChat = !this.showChat;
+            if (this.showChat && this.selectedPaperId) {
+                this.loadChats();
+            } else {
+                this.abortChat();
+            }
+        },
+
+        async loadChats() {
+            if (!this.selectedPaperId) return;
+            const res = await fetch(`api/papers/${this.selectedPaperId}/chats`);
+            if (!res.ok) return;
+            this.chatList = await res.json();
+            // Auto-select most recent chat if none selected
+            if (!this.chatId && this.chatList.length > 0) {
+                await this.loadChatMessages(this.chatList[0].id);
+            }
+        },
+
+        async loadChatMessages(chatId) {
+            this.abortChat();
+            this.chatId = chatId;
+            const res = await fetch(`api/chats/${chatId}/messages`);
+            if (!res.ok) return;
+            this.chatMessages = await res.json();
+            // Restore provider/model/params from chat
+            const chat = this.chatList.find(c => c.id === chatId);
+            if (chat) {
+                this.chatProvider = chat.provider || "ollama";
+                this.chatModel = chat.model || "";
+                if (chat.params) {
+                    try { this.chatParams = { ...this.chatParams, ...JSON.parse(chat.params) }; } catch {}
+                }
+            }
+            this.$nextTick(() => this.scrollChatToBottom());
+        },
+
+        async newChat() {
+            this.abortChat();
+            this.chatId = null;
+            this.chatMessages = [];
+        },
+
+        async deleteChat(chatId) {
+            await fetch(`api/chats/${chatId}`, { method: "DELETE" });
+            if (this.chatId === chatId) {
+                this.chatId = null;
+                this.chatMessages = [];
+            }
+            await this.loadChats();
+        },
+
+        async sendChatMessage() {
+            const message = this.chatInput.trim();
+            if (!message || this.chatLoading || !this.selectedPaperId) return;
+
+            this.abortChat();
+            this.chatInput = "";
+            this.chatMessages.push({ role: "user", content: message, id: Date.now() });
+            this.chatLoading = true;
+            this.chatStreamContent = "";
+            this.$nextTick(() => this.scrollChatToBottom());
+
+            this._chatAbortController = new AbortController();
+
+            try {
+                const res = await fetch(`api/papers/${this.selectedPaperId}/chat`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        message,
+                        chat_id: this.chatId,
+                        provider: this.chatProvider,
+                        model: this.chatModel,
+                        params: this.chatProvider === "ollama" ? this.chatParams : null,
+                    }),
+                    signal: this._chatAbortController.signal,
+                });
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split("\n");
+
+                    for (const line of lines) {
+                        if (!line.startsWith("data: ")) continue;
+                        const data = JSON.parse(line.slice(6));
+
+                        if (data.type === "chat_id") {
+                            this.chatId = data.chat_id;
+                        } else if (data.type === "text") {
+                            this.chatStreamContent += data.text;
+                            this.$nextTick(() => this.scrollChatToBottom());
+                        } else if (data.type === "done") {
+                            this.chatMessages.push({
+                                role: "assistant",
+                                content: this.chatStreamContent,
+                                id: Date.now(),
+                            });
+                            this.chatStreamContent = "";
+                            // Refresh chat list if this was a new chat
+                            await this.loadChats();
+                        } else if (data.type === "error") {
+                            this.showToast(data.error, "error");
+                        }
+                    }
+                }
+            } catch (err) {
+                if (err.name !== "AbortError") {
+                    this.showToast("Chat failed: " + err.message, "error");
+                }
+            }
+            this._chatAbortController = null;
+            this.chatLoading = false;
+        },
+
+        scrollChatToBottom() {
+            const container = this.$refs.chatMessages;
+            if (container) container.scrollTop = container.scrollHeight;
+        },
+
+        scrollToPage(pageNum) {
+            const pageDiv = document.querySelector(`.pdf-page[data-page="${pageNum}"]`);
+            if (pageDiv) pageDiv.scrollIntoView({ behavior: "smooth", block: "center" });
+        },
+
+        scrollToPageAndHighlight(pageNum, quoteText) {
+            this.scrollToPage(pageNum);
+            // Small delay to let scroll complete, then highlight
+            setTimeout(() => this.highlightTextOnPage(pageNum, quoteText), 300);
+        },
+
+        highlightTextOnPage(pageNum, quoteText) {
+            // Clear any previous chat highlights
+            document.querySelectorAll(".chat-text-highlight").forEach(el => el.remove());
+
+            const pageDiv = document.querySelector(`.pdf-page[data-page="${pageNum}"]`);
+            if (!pageDiv) return;
+
+            const textLayer = pageDiv.querySelector(".textLayer");
+            if (!textLayer) return;
+
+            // Normalize the quote for matching (collapse whitespace)
+            const normalizedQuote = quoteText.replace(/\s+/g, " ").trim().toLowerCase();
+            if (!normalizedQuote) return;
+
+            // Collect all text spans with their positions
+            const spans = Array.from(textLayer.querySelectorAll("span"));
+            const fullText = spans.map(s => s.textContent).join("");
+            const normalizedFull = fullText.replace(/\s+/g, " ").toLowerCase();
+
+            // Find the quote in the concatenated text
+            const matchIdx = normalizedFull.indexOf(normalizedQuote);
+            if (matchIdx === -1) return;
+
+            // Map character index back to spans
+            let charCount = 0;
+            const matchSpans = [];
+            for (const span of spans) {
+                const normalizedSpan = span.textContent.replace(/\s+/g, " ");
+                const spanStart = charCount;
+                const spanEnd = charCount + normalizedSpan.length;
+                charCount = spanEnd;
+
+                if (spanEnd > matchIdx && spanStart < matchIdx + normalizedQuote.length) {
+                    matchSpans.push(span);
+                }
+            }
+
+            // Create highlight overlays on matched spans
+            const overlay = pageDiv.querySelector(".pdf-annotation-layer");
+            if (!overlay) return;
+
+            for (const span of matchSpans) {
+                const rect = span.getBoundingClientRect();
+                const pageRect = pageDiv.getBoundingClientRect();
+                const highlight = document.createElement("div");
+                highlight.className = "chat-text-highlight";
+                highlight.style.left = (rect.left - pageRect.left) + "px";
+                highlight.style.top = (rect.top - pageRect.top) + "px";
+                highlight.style.width = rect.width + "px";
+                highlight.style.height = rect.height + "px";
+                overlay.appendChild(highlight);
+            }
+
+            // Auto-remove after 4 seconds
+            setTimeout(() => {
+                document.querySelectorAll(".chat-text-highlight").forEach(el => {
+                    el.style.transition = "opacity 0.5s";
+                    el.style.opacity = "0";
+                    setTimeout(() => el.remove(), 500);
+                });
+            }, 4000);
+        },
+
+        renderChatContent(content) {
+            let html = this.escapeHtml(content);
+            // Parse [[quote:"text" p.N]] into clickable blockquotes
+            html = html.replace(/\[\[quote:&quot;(.*?)&quot;\s+p\.(\d+)\]\]/g, (match, text, page) => {
+                const escaped = text.replace(/'/g, "\\'");
+                return `<div class="chat-quote cursor-pointer" onclick="document.querySelector('[x-data]').__x.$data.scrollToPageAndHighlight(${page}, '${escaped}')"><span class="italic">&ldquo;${text}&rdquo;</span> <span class="badge badge-xs badge-primary">p.${page}</span></div>`;
+            });
+            // Parse [[p.N]] references into clickable badges
+            html = html.replace(/\[\[p\.(\d+)\]\]/g,
+                '<button class="badge badge-xs badge-primary cursor-pointer mx-0.5" onclick="document.querySelector(\'[data-page=\\\'$1\\\']\')?.scrollIntoView({behavior:\'smooth\',block:\'center\'})">p.$1</button>');
+            // Basic markdown: bold, italic, code, code blocks
+            html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="bg-base-300 rounded p-2 text-xs my-1 overflow-x-auto"><code>$2</code></pre>');
+            html = html.replace(/`([^`]+)`/g, '<code class="bg-base-300 rounded px-1 text-xs">$1</code>');
+            html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+            html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+            // Line breaks
+            html = html.replace(/\n/g, '<br>');
+            return html;
+        },
+
+        escapeHtml(text) {
+            const div = document.createElement("div");
+            div.textContent = text;
+            return div.innerHTML;
         },
 
         // --- Toast ---

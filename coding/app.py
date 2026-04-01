@@ -1,13 +1,17 @@
 """Lit Review Coding — Flask web application."""
 
 import argparse
+import json
 import os
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request, send_file
+from dotenv import load_dotenv
+from flask import Flask, Response, jsonify, render_template, request, send_file
 
 import db
 import schema
+
+load_dotenv()
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB max upload
@@ -367,6 +371,232 @@ def api_paper_summary(doc_id):
     with db.connect() as conn:
         summary = db.get_paper_annotation_summary(conn, doc_id)
     return jsonify(summary)
+
+
+# --- API: Chat ---
+
+import llm as llm_providers
+
+
+def _build_system_prompt(conn, doc_id: int) -> str:
+    """Build system prompt with paper context, codes, columns, and annotations."""
+    paper = db.get_paper(conn, doc_id)
+    pages = db.get_pdf_text(doc_id, PDF_DIR)
+    codes = db.get_codes(conn)
+    columns = db.get_matrix_columns(conn)
+    annotations = db.get_annotations(conn, doc_id)
+
+    parts = [
+        "You are a research assistant helping with qualitative coding of an academic paper.",
+        "You have the full text of the paper below.",
+        "",
+        "When referencing specific passages, use page references: [[p.{page_number}]]",
+        "When quoting directly from the paper, use this format: [[quote:\"exact text from paper\" p.{page_number}]]",
+        "The quote text should be a short exact excerpt (1-2 sentences max). Examples:",
+        '- "The authors describe their BLE implementation [[p.5]]"',
+        '- [[quote:"We deployed 12 sensor nodes across the hillside over a 6-month period" p.3]]',
+        '- The evaluation methodology [[quote:"used a controlled lab environment with 5 participants" p.7]] suggests limited ecological validity.',
+        "",
+        "## Paper Metadata",
+        f"Title: {paper['title'] or 'Unknown'}",
+        f"Authors: {paper['author'] or 'Unknown'}",
+        f"Year: {paper['year'] or 'Unknown'}",
+        f"Venue: {paper['venue'] or 'Unknown'}",
+    ]
+
+    if codes:
+        parts.append("\n## Annotation Codes")
+        parts.append("The researcher uses these codes to tag passages in papers:")
+        for code in codes:
+            desc = f" — {code['description']}" if code.get('description') else ""
+            parts.append(f"- **{code['name']}**{desc}")
+            for child in code.get("children", []):
+                cdesc = f" — {child['description']}" if child.get('description') else ""
+                parts.append(f"  - {child['name']}{cdesc}")
+
+    if columns:
+        parts.append("\n## Synthesis Matrix Columns")
+        parts.append("The synthesis matrix tracks these dimensions per paper:")
+        for col in columns:
+            opts = ""
+            if col.get("options"):
+                opts = f" (options: {', '.join(o['value'] for o in col['options'])})"
+            parts.append(f"- **{col['name']}** [{col['column_type']}]{opts}")
+
+    if annotations:
+        parts.append("\n## Current Annotations on This Paper")
+        for ann in annotations:
+            code_names = ", ".join(c["name"] for c in ann.get("codes", []))
+            text = ann.get("selected_text", "") or ann.get("note", "") or "(area)"
+            preview = text[:200] + "..." if len(text) > 200 else text
+            parts.append(f"- p.{ann['page_number']} [{code_names}]: \"{preview}\"")
+
+    if pages:
+        parts.append("\n## Full Paper Text")
+        parts.append(db.format_pdf_for_prompt(pages))
+
+    return "\n".join(parts)
+
+
+def _build_prompt_summary(conn, doc_id: int) -> str:
+    """Build a compact summary of the system prompt for storage (no full text)."""
+    paper = db.get_paper(conn, doc_id)
+    pages = db.get_pdf_text(doc_id, PDF_DIR)
+    codes = db.get_codes(conn)
+    columns = db.get_matrix_columns(conn)
+    annotations = db.get_annotations(conn, doc_id)
+
+    parts = [
+        "[System instructions + page reference / quote format]",
+        "",
+        "## Paper Metadata",
+        f"Title: {paper['title'] or 'Unknown'}",
+        f"Authors: {paper['author'] or 'Unknown'}",
+        f"Year: {paper['year'] or 'Unknown'}",
+        f"Venue: {paper['venue'] or 'Unknown'}",
+    ]
+
+    if codes:
+        parts.append(f"\n## Annotation Codes ({sum(1 + len(c.get('children', [])) for c in codes)} total)")
+        for code in codes:
+            desc = f" — {code['description']}" if code.get('description') else ""
+            parts.append(f"- {code['name']}{desc}")
+            for child in code.get("children", []):
+                cdesc = f" — {child['description']}" if child.get('description') else ""
+                parts.append(f"  - {child['name']}{cdesc}")
+
+    if columns:
+        parts.append(f"\n## Matrix Columns ({len(columns)} total)")
+        for col in columns:
+            opts = ""
+            if col.get("options"):
+                opts = f" (options: {', '.join(o['value'] for o in col['options'])})"
+            parts.append(f"- {col['name']} [{col['column_type']}]{opts}")
+
+    if annotations:
+        parts.append(f"\n## Annotations on Paper ({len(annotations)} total)")
+        parts.append("[annotation details included]")
+
+    if pages:
+        total_chars = sum(len(t) for t in pages.values())
+        parts.append(f"\n## Full Paper Text ({len(pages)} pages, ~{total_chars:,} chars)")
+        parts.append("[full text included]")
+
+    return "\n".join(parts)
+
+
+@app.route("/api/papers/<int:doc_id>/chats")
+def api_get_chats(doc_id):
+    with db.connect() as conn:
+        chats = db.get_chats(conn, doc_id)
+    return jsonify(chats)
+
+
+@app.route("/api/chats/<int:chat_id>/messages")
+def api_get_chat_messages(chat_id):
+    with db.connect() as conn:
+        messages = db.get_chat_messages(conn, chat_id)
+    return jsonify(messages)
+
+
+@app.route("/api/chats/<int:chat_id>", methods=["PUT"])
+def api_update_chat(chat_id):
+    data = request.get_json()
+    with db.connect() as conn:
+        chat = db.update_chat(conn, chat_id, **data)
+    if chat is None:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(chat)
+
+
+@app.route("/api/chats/<int:chat_id>", methods=["DELETE"])
+def api_delete_chat(chat_id):
+    with db.connect() as conn:
+        ok = db.delete_chat(conn, chat_id)
+    if not ok:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify({"success": True})
+
+
+@app.route("/api/llm/models")
+def api_llm_models():
+    """Get available LLM providers and models."""
+    ollama_models = llm_providers.get_ollama_models()
+    return jsonify({
+        "ollama": ollama_models,
+        "claude": True,  # always available if CLI is installed
+        "default_params": llm_providers.DEFAULT_OLLAMA_PARAMS,
+    })
+
+
+@app.route("/api/papers/<int:doc_id>/chat", methods=["POST"])
+def api_chat(doc_id):
+    """Send a message and stream LLM response via SSE."""
+    data = request.get_json()
+    if not data or not data.get("message"):
+        return jsonify({"error": "message required"}), 400
+
+    user_message = data["message"]
+    chat_id = data.get("chat_id")
+    provider = data.get("provider", "ollama")
+    model = data.get("model", "qwen3.5:9b")
+    params = data.get("params")
+
+    with db.connect() as conn:
+        # Create or get chat
+        if chat_id:
+            chat = db.get_chat(conn, chat_id)
+            if not chat:
+                return jsonify({"error": "Chat not found"}), 404
+            provider = chat["provider"]
+            model = chat["model"]
+            if chat["params"]:
+                params = json.loads(chat["params"])
+        else:
+            params_json = json.dumps(params) if params else None
+            chat_model = model if provider == "ollama" else "claude"
+            prompt_summary = _build_prompt_summary(conn, doc_id)
+            chat = db.create_chat(
+                conn, doc_id, provider=provider, model=chat_model,
+                params=params_json, system_prompt=prompt_summary,
+            )
+            chat_id = chat["id"]
+
+        # Build system prompt
+        system_prompt = _build_system_prompt(conn, doc_id)
+
+        # Load conversation history
+        history = db.get_chat_messages(conn, chat_id)
+        messages = [{"role": m["role"], "content": m["content"]} for m in history]
+        messages.append({"role": "user", "content": user_message})
+
+        # Save user message
+        db.save_message(conn, chat_id, "user", user_message)
+
+    def generate():
+        full_response = ""
+        try:
+            yield f"data: {json.dumps({'type': 'chat_id', 'chat_id': chat_id})}\n\n"
+
+            if provider == "ollama":
+                stream = llm_providers.stream_ollama(model, system_prompt, messages, params)
+            elif provider == "claude":
+                stream = llm_providers.stream_claude(system_prompt, messages)
+            else:
+                yield f"data: {json.dumps({'type': 'error', 'error': f'Unknown provider: {provider}'})}\n\n"
+                return
+
+            for text in stream:
+                full_response += text
+                yield f"data: {json.dumps({'type': 'text', 'text': text})}\n\n"
+
+            with db.connect() as conn:
+                db.save_message(conn, chat_id, "assistant", full_response)
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+
+    return Response(generate(), mimetype="text/event-stream")
 
 
 # --- API: Stats ---

@@ -4,3 +4,4 @@ lit_review.db.bak
 __pycache__/
 *.pyc
 .venv/
+.env

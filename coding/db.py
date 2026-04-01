@@ -5,6 +5,8 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
+import fitz  # PyMuPDF
+
 DB_PATH = Path(__file__).parent / "lit_review.db"
 
 
@@ -673,3 +675,119 @@ def get_paper_annotation_summary(conn: sqlite3.Connection, document_id: int) -> 
                 "annotations": matching,
             })
     return result
+
+
+# --- PDF Text Extraction ---
+
+_pdf_text_cache: dict[int, dict[int, str]] = {}  # {document_id: {page: text}}
+
+
+def extract_pdf_text(pdf_path: str | Path) -> dict[int, str]:
+    """Extract text from PDF, keyed by page number (1-based)."""
+    doc = fitz.open(pdf_path)
+    pages = {}
+    for i, page in enumerate(doc, 1):
+        pages[i] = page.get_text()
+    doc.close()
+    return pages
+
+
+def get_pdf_text(document_id: int, pdf_dir: Path) -> dict[int, str] | None:
+    """Get extracted text for a document, with in-memory caching."""
+    if document_id in _pdf_text_cache:
+        return _pdf_text_cache[document_id]
+
+    pdf_path = pdf_dir / f"{document_id}.pdf"
+    if not pdf_path.exists():
+        return None
+
+    pages = extract_pdf_text(pdf_path)
+    _pdf_text_cache[document_id] = pages
+    return pages
+
+
+def format_pdf_for_prompt(pages: dict[int, str]) -> str:
+    """Format extracted PDF text with page markers for Claude."""
+    parts = []
+    for page_num in sorted(pages.keys()):
+        text = pages[page_num].strip()
+        if text:
+            parts.append(f"[Page {page_num}]\n{text}")
+    return "\n\n".join(parts)
+
+
+# --- Chat ---
+
+
+def create_chat(
+    conn: sqlite3.Connection, document_id: int,
+    title: str | None = None, provider: str = "ollama",
+    model: str = "qwen3.5:9b", params: str | None = None,
+    system_prompt: str | None = None,
+) -> dict:
+    cursor = conn.execute(
+        "INSERT INTO paper_chat (document_id, title, provider, model, params, system_prompt) VALUES (?, ?, ?, ?, ?, ?)",
+        (document_id, title, provider, model, params, system_prompt)
+    )
+    conn.commit()
+    return dict(conn.execute(
+        "SELECT * FROM paper_chat WHERE id = ?", (cursor.lastrowid,)
+    ).fetchone())
+
+
+def get_chats(conn: sqlite3.Connection, document_id: int) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM paper_chat WHERE document_id = ? ORDER BY updated_at DESC",
+        (document_id,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_chat(conn: sqlite3.Connection, chat_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM paper_chat WHERE id = ?", (chat_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_chat_messages(conn: sqlite3.Connection, chat_id: int) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM chat_message WHERE chat_id = ? ORDER BY id",
+        (chat_id,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def save_message(conn: sqlite3.Connection, chat_id: int, role: str, content: str) -> dict:
+    cursor = conn.execute(
+        "INSERT INTO chat_message (chat_id, role, content) VALUES (?, ?, ?)",
+        (chat_id, role, content)
+    )
+    conn.execute(
+        "UPDATE paper_chat SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (chat_id,)
+    )
+    conn.commit()
+    return dict(conn.execute(
+        "SELECT * FROM chat_message WHERE id = ?", (cursor.lastrowid,)
+    ).fetchone())
+
+
+def update_chat(conn: sqlite3.Connection, chat_id: int, **kwargs) -> dict | None:
+    allowed = {"title", "model", "provider", "params"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if not updates:
+        return None
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    conn.execute(
+        f"UPDATE paper_chat SET {set_clause} WHERE id = ?",
+        (*updates.values(), chat_id)
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM paper_chat WHERE id = ?", (chat_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def delete_chat(conn: sqlite3.Connection, chat_id: int) -> bool:
+    conn.execute("DELETE FROM chat_message WHERE chat_id = ?", (chat_id,))
+    cursor = conn.execute("DELETE FROM paper_chat WHERE id = ?", (chat_id,))
+    conn.commit()
+    return cursor.rowcount > 0
