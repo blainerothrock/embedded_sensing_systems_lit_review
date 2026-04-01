@@ -694,7 +694,7 @@ def get_annotations_by_code(conn: sqlite3.Connection, code_id: int) -> list[dict
     for row in rows:
         ann = dict(row)
         codes = conn.execute("""
-            SELECT c.id, c.name, c.color, c.parent_id
+            SELECT c.id, c.name, c.color, c.parent_id, ac.note as ac_note
             FROM annotation_code ac JOIN code c ON c.id = ac.code_id
             WHERE ac.annotation_id = ?
         """, (ann["id"],)).fetchall()
@@ -834,3 +834,22 @@ def delete_chat(conn: sqlite3.Connection, chat_id: int) -> bool:
     cursor = conn.execute("DELETE FROM paper_chat WHERE id = ?", (chat_id,))
     conn.commit()
     return cursor.rowcount > 0
+
+
+# --- Paper Notes ---
+
+
+def get_paper_note(conn: sqlite3.Connection, doc_id: int) -> str:
+    row = conn.execute(
+        "SELECT content FROM paper_note WHERE document_id = ?", (doc_id,)
+    ).fetchone()
+    return row["content"] if row else ""
+
+
+def save_paper_note(conn: sqlite3.Connection, doc_id: int, content: str) -> None:
+    conn.execute(
+        """INSERT INTO paper_note (document_id, content) VALUES (?, ?)
+           ON CONFLICT(document_id) DO UPDATE SET content = ?, updated_at = CURRENT_TIMESTAMP""",
+        (doc_id, content, content),
+    )
+    conn.commit()

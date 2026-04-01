@@ -15,6 +15,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     _migrate_annotation_code_note(conn)
     _create_matrix_column_tables(conn)
     _create_chat_tables(conn)
+    _create_paper_notes(conn)
     conn.commit()
 
 
@@ -304,3 +305,16 @@ def _create_chat_tables(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_chat_message_chat ON chat_message(chat_id)"
     )
+
+
+def _create_paper_notes(conn: sqlite3.Connection) -> None:
+    """Create table for paper-level notes (separate from review notes)."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS paper_note (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id INTEGER UNIQUE NOT NULL,
+            content TEXT NOT NULL DEFAULT '',
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (document_id) REFERENCES document(id)
+        )
+    """)

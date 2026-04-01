@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Lit Review Coding — Style Guide v2</title>
+
+  <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css" rel="stylesheet"/>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;1,300&display=swap" rel="stylesheet"/>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: { extend: { fontFamily: {
+        sans: ['IBM Plex Sans', 'system-ui', 'sans-serif'],
+        mono: ['IBM Plex Mono', 'monospace'],
+      }}}
+    }
+  </script>
+
+  <style>
+    [data-theme="dark"] {
+      --color-base-100: #111318;
+      --color-base-200: #191c23;
+      --color-base-300: #20242e;
+      --color-base-content: #cdd5e0;
+      --color-primary: #38bdf8;
+      --color-primary-content: #0c1a26;
+      --color-secondary: #a78bfa;
+      --color-secondary-content: #1a0a2e;
+      --color-accent: #34d399;
+      --color-accent-content: #042f1e;
+      --color-neutral: #2a303c;
+      --color-neutral-content: #a6adc8;
+      --color-success: #34d399;
+      --color-warning: #fbbf24;
+      --color-error: #f87171;
+      --rounded-box: 0.375rem;
+      --rounded-btn: 0.25rem;
+      --rounded-badge: 0.25rem;
+    }
+    [data-theme="light"] {
+      --color-base-100: #f8f9fb;
+      --color-base-200: #eef0f5;
+      --color-base-300: #e2e5ed;
+      --color-base-content: #1e2330;
+      --color-primary: #0369a1;
+      --color-primary-content: #f0f9ff;
+      --color-secondary: #6d28d9;
+      --color-secondary-content: #faf5ff;
+      --color-accent: #059669;
+      --color-accent-content: #ecfdf5;
+      --color-neutral: #e2e5ed;
+      --color-neutral-content: #374151;
+      --color-success: #059669;
+      --color-warning: #d97706;
+      --color-error: #dc2626;
+      --rounded-box: 0.375rem;
+      --rounded-btn: 0.25rem;
+      --rounded-badge: 0.25rem;
+    }
+
+    * { font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    code, kbd, pre, .mono { font-family: 'IBM Plex Mono', monospace; }
+    .tab { font-size: 0.75rem; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; }
+
+    .paper-item {
+      border-left: 2px solid transparent;
+      transition: border-color 0.12s, background 0.12s;
+    }
+    .paper-item:hover  { border-left-color: var(--color-primary); }
+    .paper-item.active { border-left-color: var(--color-primary); background: var(--color-base-300); }
+
+    .hl-yellow { background: rgba(251,191,36,.22); border-bottom: 1px solid rgba(251,191,36,.55); }
+    .hl-green  { background: rgba(52,211,153,.18); border-bottom: 1px solid rgba(52,211,153,.45); }
+    .hl-sky    { background: rgba(56,189,248,.18); border-bottom: 1px solid rgba(56,189,248,.45); }
+
+    .code-pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 1px 7px; border-radius: 3px; font-size: 11px; font-weight: 500;
+      font-family: 'IBM Plex Mono', monospace; letter-spacing: .02em;
+    }
+
+    .code-block {
+      background: var(--color-base-300);
+      border: 1px solid color-mix(in srgb, var(--color-base-content) 10%, transparent);
+      border-radius: 6px;
+      padding: 14px 16px;
+      font-size: 11.5px;
+      line-height: 1.65;
+      overflow-x: auto;
+      white-space: pre;
+      font-family: 'IBM Plex Mono', monospace;
+    }
+    .tok-comment { color: #6e7681; font-style: italic; }
+    .tok-kw   { color: var(--color-primary); }
+    .tok-fn   { color: var(--color-accent); }
+    .tok-str  { color: var(--color-warning); }
+    .tok-type { color: var(--color-secondary); }
+    .tok-p    { opacity: 0.5; }
+
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--color-base-300); border-radius: 9px; }
+  </style>
+</head>
+<body class="bg-base-100 text-base-content min-h-screen">
+
+<!-- HEADER -->
+<header class="sticky top-0 z-50 bg-base-200 border-b border-base-300 px-6 py-3 flex items-center justify-between">
+  <div class="flex items-center gap-3">
+    <span class="mono text-primary text-xs font-medium tracking-widest uppercase">LRC</span>
+    <span class="text-base-content/30 text-xs">—</span>
+    <span class="text-base-content/60 text-xs font-medium">Style Guide</span>
+    <span class="badge badge-xs bg-secondary/15 text-secondary border-0 mono">v2 · Vue + Pinia</span>
+  </div>
+  <label class="flex items-center gap-2 cursor-pointer">
+    <span class="mono text-xs text-base-content/40">dark</span>
+    <input type="checkbox" class="toggle toggle-xs toggle-primary"
+           onchange="document.documentElement.setAttribute('data-theme', this.checked ? 'light' : 'dark')"/>
+    <span class="mono text-xs text-base-content/40">light</span>
+  </label>
+</header>
+
+<div class="flex">
+
+<!-- SIDEBAR NAV -->
+<nav class="hidden lg:block w-44 shrink-0 sticky top-11 h-[calc(100vh-44px)] overflow-y-auto border-r border-base-300 bg-base-200 py-4">
+  <ul class="space-y-0.5 px-3">
+    <li><a href="#s1"  class="block mono text-xs opacity-50 hover:opacity-100 hover:text-primary px-2 py-1 rounded transition-colors">§1 Tokens</a></li>
+    <li><a href="#s2"  class="block mono text-xs opacity-50 hover:opacity-100 hover:text-primary px-2 py-1 rounded transition-colors">§2 Typography</a></li>
+    <li><a href="#s3"  class="block mono text-xs opacity-50 hover:opacity-100 hover:text-primary px-2 py-1 rounded transition-colors">§3 Navbar</a></li>
+    <li><a href="#s4"  class="block mono text-xs opacity-50 hover:opacity-100 hover:text-primary px-2 py-1 rounded transition-colors">§4 Paper List</a></li>
+    <li><a href="#s5"  class="block mono text-xs opacity-50 hover:opacity-100 hover:text-primary px-2 py-1 rounded transition-colors">§5 Detail Panel</a></li>
+    <li><a href="#s6"  class="block mono text-xs opacity-50 hover:opacity-100 hover:text-primary px-2 py-1 rounded transition-colors">§6 Code Builder</a></li>
+    <li><a href="#s7"  class="block mono text-xs opacity-50 hover:opacity-100 hover:text-primary px-2 py-1 rounded transition-colors">§7 Chat Panel</a></li>
+    <li><a href="#s8"  class="block mono text-xs opacity-50 hover:opacity-100 hover:text-primary px-2 py-1 rounded transition-colors">§8 PDF Toolbar</a></li>
+    <li><a href="#s9"  class="block mono text-xs opacity-50 hover:opacity-100 hover:text-primary px-2 py-1 rounded transition-colors">§9 Buttons</a></li>
+    <li><a href="#s10" class="block mono text-xs opacity-50 hover:opacity-100 hover:text-primary px-2 py-1 rounded transition-colors">§10 Layout</a></li>
+    <li><a href="#s11" class="block mono text-xs opacity-50 hover:opacity-100 hover:text-primary px-2 py-1 rounded transition-colors">§11 Highlights</a></li>
+    <li><a href="#s12" class="block mono text-xs opacity-50 hover:opacity-100 hover:text-primary px-2 py-1 rounded transition-colors">§12 Code Palette</a></li>
+    <li><a href="#s13" class="block mono text-xs opacity-50 hover:opacity-100 hover:text-primary px-2 py-1 rounded transition-colors">§13 Markdown Note</a></li>
+    <li class="pt-3 border-t border-base-300 mt-2">
+      <p class="mono text-xs opacity-30 px-2 pb-1" style="font-size:9px;letter-spacing:.1em">VUE + PINIA</p>
+    </li>
+    <li><a href="#s14" class="block mono text-xs text-secondary/70 hover:text-secondary px-2 py-1 rounded transition-colors">§14 Component Tree</a></li>
+    <li><a href="#s15" class="block mono text-xs text-secondary/70 hover:text-secondary px-2 py-1 rounded transition-colors">§15 Pinia Stores</a></li>
+    <li><a href="#s16" class="block mono text-xs text-secondary/70 hover:text-secondary px-2 py-1 rounded transition-colors">§16 Live Demo</a></li>
+  </ul>
+</nav>
+
+<!-- MAIN CONTENT -->
+<main class="flex-1 min-w-0">
+<div class="max-w-3xl mx-auto px-6 py-10 space-y-16">
+
+
+<!-- §1 TOKENS -->
+<section id="s1">
+  <h2 class="mono text-xs text-primary tracking-widest uppercase mb-6">§1 — Tokens</h2>
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+    <div class="rounded bg-primary h-14 flex items-end p-2"><span class="mono text-xs text-primary-content/80">primary</span></div>
+    <div class="rounded bg-secondary h-14 flex items-end p-2"><span class="mono text-xs text-secondary-content/80">secondary</span></div>
+    <div class="rounded bg-accent h-14 flex items-end p-2"><span class="mono text-xs text-accent-content/80">accent</span></div>
+    <div class="rounded bg-neutral h-14 flex items-end p-2"><span class="mono text-xs text-neutral-content/80">neutral</span></div>
+    <div class="rounded bg-base-100 border border-base-300 h-14 flex items-end p-2"><span class="mono text-xs opacity-60">base-100</span></div>
+    <div class="rounded bg-base-200 h-14 flex items-end p-2"><span class="mono text-xs opacity-60">base-200</span></div>
+    <div class="rounded bg-base-300 h-14 flex items-end p-2"><span class="mono text-xs opacity-60">base-300</span></div>
+    <div class="rounded bg-base-content h-14 flex items-end p-2"><span class="mono text-xs text-base-100/80">content</span></div>
+  </div>
+  <div class="flex flex-wrap gap-4 mt-4">
+    <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-success"></span><span class="text-xs opacity-60">success</span></div>
+    <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-warning"></span><span class="text-xs opacity-60">warning</span></div>
+    <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-error"></span><span class="text-xs opacity-60">error</span></div>
+    <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-info"></span><span class="text-xs opacity-60">info</span></div>
+  </div>
+</section>
+
+
+<!-- §2 TYPOGRAPHY -->
+<section id="s2">
+  <h2 class="mono text-xs text-primary tracking-widest uppercase mb-6">§2 — Typography</h2>
+  <div class="space-y-4">
+    <div><p class="text-2xl font-semibold leading-tight">Lit Review Coding</p><p class="mono text-xs opacity-30 mt-1">text-2xl font-semibold — modal / page title</p></div>
+    <div><p class="text-base font-medium">A LoRa-based Wireless Sensor Network monitoring system</p><p class="mono text-xs opacity-30 mt-1">text-base font-medium — paper title</p></div>
+    <div><p class="text-sm opacity-70">Ragnoli, Mattia and Esposito, Paolo and Stornelli… 2023</p><p class="mono text-xs opacity-30 mt-1">text-sm opacity-70 — authors / metadata</p></div>
+    <div><p class="text-xs opacity-50">0/275 reviewed · 11 PDFs</p><p class="mono text-xs opacity-30 mt-1">text-xs opacity-50 — status counters</p></div>
+    <div class="pt-3 border-t border-base-300"><p class="mono text-sm">STM32L · LoRaWAN · BLE · I²C</p><p class="mono text-xs opacity-30 mt-1">mono text-sm — keys, values, technical labels</p></div>
+  </div>
+</section>
+
+
+<!-- §3 NAVBAR -->
+<section id="s3">
+  <h2 class="mono text-xs text-primary tracking-widest uppercase mb-6">§3 — Navigation Bar</h2>
+  <div class="mockup-window bg-base-200 border border-base-300">
+    <div class="bg-base-100">
+      <div class="navbar min-h-0 bg-base-200 border-b border-base-300 px-3 gap-1" style="height:44px">
+        <button class="btn btn-ghost btn-xs btn-square"><svg class="w-4 h-4 opacity-60" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+        <div class="tabs tabs-boxed bg-base-300 h-7 p-0.5 gap-0 ml-1">
+          <a class="tab tab-active tab-xs h-6 px-3">Papers</a>
+          <a class="tab tab-xs h-6 px-3">Matrix</a>
+          <a class="tab tab-xs h-6 px-3">Themes</a>
+        </div>
+        <div class="flex items-center gap-1 ml-2">
+          <button class="btn btn-ghost btn-xs btn-square opacity-40"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></svg></button>
+          <span class="mono text-xs opacity-50 px-1">1 / 275</span>
+          <button class="btn btn-ghost btn-xs btn-square opacity-60"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>
+        </div>
+        <div class="flex-1"></div>
+        <button class="btn btn-ghost btn-xs gap-1.5"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M7 7h10M7 12h6"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>Codes</button>
+        <button class="btn btn-ghost btn-xs gap-1.5"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="18" rx="1"/></svg>+ Columns</button>
+        <button class="btn btn-primary btn-xs gap-1.5"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chat</button>
+        <span class="mono text-xs opacity-40 ml-1">0/275 · 11 PDFs</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- §4 PAPER LIST -->
+<section id="s4">
+  <h2 class="mono text-xs text-primary tracking-widest uppercase mb-6">§4 — Paper List  <span class="mono text-base-content/30 normal-case font-normal text-xs ml-2">&lt;PaperList /&gt;</span></h2>
+  <div class="bg-base-200 border border-base-300 rounded w-72">
+    <div class="p-2 border-b border-base-300">
+      <label class="input input-xs input-bordered flex items-center gap-1 bg-base-100 w-full">
+        <svg class="w-3 h-3 opacity-40" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input type="text" placeholder="Search papers…" class="grow text-xs bg-transparent outline-none"/>
+      </label>
+    </div>
+    <div class="p-2 border-b border-base-300">
+      <select class="select select-xs select-bordered w-full bg-base-100 text-xs"><option>All papers</option><option>Pending</option><option>Reviewed</option></select>
+    </div>
+    <ul class="divide-y divide-base-300">
+      <li class="paper-item active px-3 py-2.5 cursor-pointer">
+        <p class="text-xs font-medium leading-snug line-clamp-2">A LoRa-based Wireless Sensor Network monitoring system for urban areas…</p>
+        <div class="flex items-center gap-1.5 mt-1.5">
+          <span class="badge badge-xs bg-warning/20 text-warning border-0">pending</span>
+          <span class="badge badge-xs bg-primary/15 text-primary border-0 mono">PDF</span>
+        </div>
+      </li>
+      <li class="paper-item px-3 py-2.5 cursor-pointer">
+        <p class="text-xs font-medium leading-snug line-clamp-2 opacity-80">A Low-Cost CPM Machine for Passive and Active Wrist Rehabilitation…</p>
+        <div class="flex items-center gap-1.5 mt-1.5">
+          <span class="badge badge-xs bg-warning/20 text-warning border-0">pending</span>
+          <span class="badge badge-xs bg-primary/15 text-primary border-0 mono">PDF</span>
+        </div>
+      </li>
+      <li class="paper-item px-3 py-2.5 cursor-pointer">
+        <p class="text-xs font-medium leading-snug line-clamp-2 opacity-80">A Machine Learning-Based Monitoring System for Attention and Stress…</p>
+        <div class="flex items-center gap-1.5 mt-1.5">
+          <span class="badge badge-xs bg-success/20 text-success border-0">reviewed</span>
+          <span class="badge badge-xs bg-primary/15 text-primary border-0 mono">PDF</span>
+        </div>
+      </li>
+    </ul>
+    <div class="px-3 py-2 border-t border-base-300"><span class="mono text-xs opacity-40">275 papers</span></div>
+  </div>
+</section>
+
+
+<!-- §5 DETAIL PANEL -->
+<section id="s5">
+  <h2 class="mono text-xs text-primary tracking-widest uppercase mb-6">§5 — Detail Panel  <span class="mono text-base-content/30 normal-case font-normal text-xs ml-2">&lt;DetailPanel /&gt;</span></h2>
+  <div class="bg-base-200 border border-base-300 rounded w-80">
+    <div class="px-4 pt-4 pb-3 border-b border-base-300">
+      <p class="text-sm font-semibold leading-snug">A LoRa-based Wireless Sensor Network monitoring system for urban areas subjected to landslide</p>
+      <p class="text-xs opacity-50 mt-1">Ragnoli, Mattia and Esposito, Paolo and Stornelli… 2023</p>
+      <a class="mono text-xs text-primary hover:underline mt-0.5 inline-block">10.1145/3627345.3627359 ↗</a>
+    </div>
+    <div class="tabs tabs-border px-2 pt-1">
+      <a class="tab text-xs">Details</a>
+      <a class="tab text-xs">Screening</a>
+      <a class="tab tab-active text-xs">Annotations</a>
+    </div>
+    <div class="p-4 space-y-4">
+      <div>
+        <p class="mono text-xs opacity-40 uppercase tracking-widest mb-2">Regions</p>
+        <div class="bg-base-300 rounded p-3 space-y-2">
+          <div class="flex items-center gap-2">
+            <span class="mono text-xs opacity-40">p. 2</span>
+            <span class="badge badge-xs border-0 bg-primary/15 text-primary">highlight</span>
+          </div>
+          <p class="text-xs opacity-70 italic leading-relaxed">the monitoring of landslides represents an aspect of the study of landslides that has gradually assumed a fundamental and indispensable role.</p>
+        </div>
+      </div>
+      <div>
+        <p class="mono text-xs opacity-40 uppercase tracking-widest mb-2">Codes</p>
+        <div class="flex flex-wrap gap-1.5">
+          <span class="code-pill bg-success/15 text-success">● Ecology</span>
+          <span class="code-pill bg-error/15 text-error">● Health</span>
+          <span class="code-pill bg-base-300 text-base-content/60">● Other</span>
+        </div>
+        <button class="btn btn-ghost btn-xs mt-2 text-primary gap-1"><svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>add code</button>
+      </div>
+      <div>
+        <p class="mono text-xs opacity-40 uppercase tracking-widest mb-2">Notes</p>
+        <textarea class="textarea textarea-bordered textarea-xs w-full bg-base-100 text-xs min-h-16 resize-none" placeholder="Free-form notes, markdown supported…"></textarea>
+      </div>
+      <div class="flex justify-between">
+        <button class="btn btn-ghost btn-xs gap-1 text-primary"><svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Add region</button>
+        <button class="btn btn-ghost btn-xs gap-1 text-error"><svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>Delete</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- §6 CODE BUILDER -->
+<section id="s6">
+  <h2 class="mono text-xs text-primary tracking-widest uppercase mb-6">§6 — Code Builder  <span class="mono text-base-content/30 normal-case font-normal text-xs ml-2">&lt;CodeBuilderModal /&gt;</span></h2>
+  <div class="bg-base-200 border border-base-300 rounded w-full max-w-xl">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-base-300">
+      <h3 class="text-sm font-semibold">Code Builder</h3>
+      <button class="btn btn-ghost btn-xs btn-square"><svg class="w-4 h-4 opacity-50" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div class="p-4 space-y-2">
+      <div class="flex gap-2 mb-3">
+        <input type="text" placeholder="New top-level code…" class="input input-xs input-bordered flex-1 bg-base-100 text-xs"/>
+        <button class="btn btn-primary btn-xs">+ Add Code</button>
+      </div>
+      <div class="bg-base-300 rounded">
+        <div class="flex items-center gap-2 px-3 py-2">
+          <span class="w-2.5 h-2.5 rounded-sm bg-warning shrink-0"></span>
+          <span class="text-xs font-medium flex-1">Application Type</span>
+          <span class="mono text-xs opacity-40 mr-2">0 ann.</span>
+          <button class="btn btn-ghost btn-xs btn-square opacity-40 p-0 min-h-0 h-5 w-5">↑</button>
+          <button class="btn btn-ghost btn-xs btn-square opacity-40 p-0 min-h-0 h-5 w-5">↓</button>
+        </div>
+        <div class="px-3 pb-3 space-y-1">
+          <div class="flex items-center gap-2 pl-4">
+            <span class="w-1.5 h-1.5 rounded-full bg-success shrink-0"></span>
+            <span class="text-xs flex-1">Ecology</span>
+            <span class="mono text-xs text-success mr-2">2 ann.</span>
+            <button class="btn btn-ghost btn-xs btn-square opacity-30 p-0 min-h-0 h-5 w-5 text-error">✕</button>
+          </div>
+          <div class="flex items-center gap-2 pl-4">
+            <span class="w-1.5 h-1.5 rounded-full bg-error shrink-0"></span>
+            <span class="text-xs flex-1">Health</span>
+            <span class="mono text-xs opacity-40 mr-2">0 ann.</span>
+            <button class="btn btn-ghost btn-xs btn-square opacity-30 p-0 min-h-0 h-5 w-5 text-error">✕</button>
+          </div>
+          <div class="flex items-center gap-1 pl-4 pt-1">
+            <input type="text" placeholder="New sub-code…" class="input input-xs input-bordered flex-1 bg-base-100 text-xs"/>
+            <button class="btn btn-ghost btn-xs btn-square text-primary">+</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- §7 CHAT PANEL -->
+<section id="s7">
+  <h2 class="mono text-xs text-primary tracking-widest uppercase mb-6">§7 — Chat Panel  <span class="mono text-base-content/30 normal-case font-normal text-xs ml-2">&lt;ChatPanel /&gt;</span></h2>
+  <div class="bg-base-200 border border-base-300 rounded w-72 flex flex-col">
+    <div class="flex items-center justify-between px-3 py-2.5 border-b border-base-300">
+      <span class="text-sm font-medium">Chat</span>
+      <div class="flex gap-1">
+        <button class="btn btn-ghost btn-xs btn-square"><svg class="w-3.5 h-3.5 opacity-50" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+        <button class="btn btn-ghost btn-xs btn-square"><svg class="w-3.5 h-3.5 opacity-50" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+      </div>
+    </div>
+    <div class="px-3 py-2 border-b border-base-300 space-y-1.5">
+      <select class="select select-xs select-bordered w-full bg-base-100 text-xs"><option>Ollama</option><option>OpenAI</option></select>
+      <select class="select select-xs select-bordered w-full bg-base-100 text-xs"><option>qwen3.5:4b</option><option>llama3.2:3b</option></select>
+    </div>
+    <div class="p-3 space-y-3">
+      <div class="flex justify-end">
+        <div class="bg-primary text-primary-content rounded px-3 py-2 text-xs max-w-[80%] leading-relaxed">does this paper mention a specific microcontroller?</div>
+      </div>
+      <div class="bg-base-300 rounded px-3 py-2 text-xs leading-relaxed max-w-[92%]">
+        Yes — the authors specify the <strong>STM32L</strong> <span class="badge badge-xs bg-primary/20 text-primary border-0 mono">p.4</span>, chosen for its low-power modes.
+      </div>
+    </div>
+    <div class="p-2 border-t border-base-300">
+      <div class="flex gap-1.5">
+        <input type="text" placeholder="Ask about this paper…" class="input input-xs input-bordered flex-1 bg-base-100 text-xs"/>
+        <button class="btn btn-primary btn-xs btn-square"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="m22 2-11 20-4-9-9-4z"/></svg></button>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- §8 PDF TOOLBAR -->
+<section id="s8">
+  <h2 class="mono text-xs text-primary tracking-widest uppercase mb-6">§8 — PDF Viewer Toolbar  <span class="mono text-base-content/30 normal-case font-normal text-xs ml-2">&lt;PdfToolbar /&gt;</span></h2>
+  <div class="bg-base-300 rounded border border-base-200 inline-flex items-center gap-1 px-2 py-1.5">
+    <button class="btn btn-ghost btn-xs gap-1 opacity-60"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0m0 0V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v4"/><path d="M6 14v1a6 6 0 0 0 12 0v-4"/></svg>Hand</button>
+    <button class="btn btn-primary btn-xs gap-1"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>Text</button>
+    <button class="btn btn-ghost btn-xs gap-1 opacity-60"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>Box</button>
+    <div class="w-px h-5 bg-base-content/10 mx-1"></div>
+    <button class="btn btn-ghost btn-xs btn-square opacity-60">−</button>
+    <span class="mono text-xs opacity-60 w-10 text-center">205%</span>
+    <button class="btn btn-ghost btn-xs btn-square opacity-60">+</button>
+    <div class="w-px h-5 bg-base-content/10 mx-1"></div>
+    <button class="btn btn-ghost btn-xs btn-square opacity-60"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg></button>
+    <span class="mono text-xs opacity-40 ml-1">p.2/8</span>
+  </div>
+</section>
+
+
+<!-- §9 BUTTONS & BADGES -->
+<section id="s9">
+  <h2 class="mono text-xs text-primary tracking-widest uppercase mb-6">§9 — Buttons & Badges</h2>
+  <div class="space-y-4">
+    <div class="flex flex-wrap items-center gap-2">
+      <button class="btn btn-primary btn-xs">Primary xs</button>
+      <button class="btn btn-primary btn-sm">Primary sm</button>
+      <button class="btn btn-ghost btn-xs">Ghost xs</button>
+      <button class="btn btn-outline btn-xs">Outline xs</button>
+      <button class="btn btn-error btn-xs">Danger xs</button>
+      <button class="btn btn-accent btn-xs">Accent xs</button>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+      <span class="badge badge-xs bg-warning/20 text-warning border-0">pending</span>
+      <span class="badge badge-xs bg-success/20 text-success border-0">reviewed</span>
+      <span class="badge badge-xs bg-error/20 text-error border-0">flagged</span>
+      <span class="badge badge-xs bg-primary/15 text-primary border-0 mono">PDF</span>
+      <span class="badge badge-xs bg-secondary/15 text-secondary border-0 mono">p.4</span>
+      <span class="code-pill bg-success/15 text-success">● Ecology</span>
+      <span class="code-pill bg-error/15 text-error">● Health</span>
+      <span class="code-pill bg-secondary/15 text-secondary">● Adjacent</span>
+    </div>
+  </div>
+</section>
+
+
+<!-- §10 LAYOUT -->
+<section id="s10">
+  <h2 class="mono text-xs text-primary tracking-widest uppercase mb-6">§10 — 3-Column Layout Grid</h2>
+  <div class="border border-base-300 rounded overflow-hidden text-xs font-mono">
+    <div class="bg-base-200 border-b border-base-300 h-11 flex items-center px-3 opacity-60">&lt;AppNavbar /&gt; — 44px fixed</div>
+    <div class="flex h-48">
+      <div class="w-56 border-r border-base-300 bg-base-200 p-2 flex flex-col justify-between">
+        <span class="opacity-60">&lt;PaperList /&gt;</span>
+        <span class="opacity-25">w-56 · shrink-0</span>
+      </div>
+      <div class="flex-1 bg-base-100 p-2 flex flex-col justify-between">
+        <span class="opacity-60">&lt;PdfViewer /&gt;</span>
+        <span class="opacity-25">flex-1 · overflow-auto</span>
+      </div>
+      <div class="w-72 border-l border-base-300 bg-base-200 p-2 flex flex-col justify-between">
+        <span class="opacity-60">&lt;DetailPanel /&gt;</span>
+        <span class="opacity-25">w-72 · shrink-0</span>
+      </div>
+    </div>
+    <div class="bg-base-300 border-t border-base-300 h-6 flex items-center px-3 opacity-30">optional &lt;StatusBar /&gt; 24px</div>
+  </div>
+</section>
+
+
+<!-- §11 HIGHLIGHTS -->
+<section id="s11">
+  <h2 class="mono text-xs text-primary tracking-widest uppercase mb-6">§11 — PDF Highlight Colours</h2>
+  <div class="max-w-xl space-y-3">
+    <p class="text-sm leading-relaxed">
+      The monitoring of the conditions of landslides represents
+      <span class="hl-yellow px-0.5">an aspect of the study that has gradually assumed</span>
+      a fundamental role. This activity represents
+      <span class="hl-green px-0.5">the elaboration of strategies for management</span>
+      of natural hazards. Important infrastructures
+      <span class="hl-sky px-0.5">require continuous monitoring via LoRaWAN</span>
+      for early-warning systems.
+    </p>
+    <div class="flex gap-5">
+      <div class="flex items-center gap-2"><span class="w-5 h-3 hl-yellow rounded-sm inline-block"></span><span class="mono text-xs opacity-50">warning/22</span></div>
+      <div class="flex items-center gap-2"><span class="w-5 h-3 hl-green rounded-sm inline-block"></span><span class="mono text-xs opacity-50">success/18</span></div>
+      <div class="flex items-center gap-2"><span class="w-5 h-3 hl-sky rounded-sm inline-block"></span><span class="mono text-xs opacity-50">primary/18</span></div>
+    </div>
+  </div>
+</section>
+
+
+<!-- §12 CODE PALETTE -->
+<section id="s12">
+  <h2 class="mono text-xs text-primary tracking-widest uppercase mb-1">§12 — Code Palette  <span class="mono text-base-content/30 normal-case font-normal text-xs ml-2">&lt;CodeSelector /&gt;</span></h2>
+  <p class="text-xs opacity-40 mb-6">Active code selector — driven by <code class="mono bg-base-300 px-1 rounded">useCodebookStore().activeCode</code></p>
+  <div class="bg-base-200 border border-base-300 rounded w-56">
+    <div class="px-3 pt-3 pb-2 border-b border-base-300"><p class="mono text-xs opacity-40 uppercase tracking-widest">Codes</p></div>
+    <ul class="p-2 space-y-0.5">
+      <li class="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer" style="background:rgba(88,166,255,0.10);border:1px solid rgba(88,166,255,0.25)">
+        <span class="w-2 h-2 rounded-full shrink-0" style="background:#58a6ff"></span><span class="text-xs" style="color:#58a6ff">Methodology</span><span class="ml-auto mono" style="color:#58a6ff;font-size:8px">●</span>
+      </li>
+      <li class="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer hover:bg-base-300 border border-transparent"><span class="w-2 h-2 rounded-full shrink-0" style="background:#3fb950"></span><span class="text-xs opacity-60">Finding</span></li>
+      <li class="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer hover:bg-base-300 border border-transparent"><span class="w-2 h-2 rounded-full shrink-0" style="background:#bc8cff"></span><span class="text-xs opacity-60">Related Work</span></li>
+      <li class="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer hover:bg-base-300 border border-transparent"><span class="w-2 h-2 rounded-full shrink-0" style="background:#f0883e"></span><span class="text-xs opacity-60">Limitation</span></li>
+      <li class="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer hover:bg-base-300 border border-transparent"><span class="w-2 h-2 rounded-full shrink-0" style="background:#e3b341"></span><span class="text-xs opacity-60">Key Claim</span></li>
+      <li class="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer hover:bg-base-300 border border-transparent"><span class="w-2 h-2 rounded-full shrink-0" style="background:#f85149"></span><span class="text-xs opacity-60">Follow Up</span></li>
+    </ul>
+  </div>
+</section>
+
+
+<!-- §13 MARKDOWN NOTE — LIVE VUE -->
+<section id="s13">
+  <h2 class="mono text-xs text-primary tracking-widest uppercase mb-1">§13 — Markdown Note  <span class="mono text-base-content/30 normal-case font-normal text-xs ml-2">&lt;MarkdownNote /&gt;</span></h2>
+  <p class="text-xs opacity-40 mb-6">Live Vue 3 component — Edit/Preview toggle, ⌘S save, stores raw Markdown for SQLite + LLM context</p>
+
+  <div class="max-w-xl space-y-4">
+    <!-- card 1: empty -->
+    <div class="bg-base-200 border border-base-300 rounded p-4 space-y-3">
+      <div class="flex items-start justify-between gap-2">
+        <div>
+          <p class="mono text-xs opacity-40 uppercase tracking-wider mb-0.5">p. 2 · highlight</p>
+          <p class="text-xs opacity-60 italic leading-snug">"the monitoring of landslides represents an aspect of the study of landslides that has gradually assumed a fundamental and indispensable role."</p>
+        </div>
+        <span class="badge badge-xs border border-base-content/20 text-base-content/50 bg-transparent shrink-0">Ecology</span>
+      </div>
+      <div class="divider my-0 opacity-20"></div>
+      <div id="note-empty"></div>
+    </div>
+
+    <!-- card 2: pre-populated -->
+    <div class="bg-base-200 border border-base-300 rounded p-4 space-y-3">
+      <div class="flex items-start justify-between gap-2">
+        <div>
+          <p class="mono text-xs opacity-40 uppercase tracking-wider mb-0.5">p. 4 · highlight</p>
+          <p class="text-xs opacity-60 italic leading-snug">"LoRaWAN provides long-range, low-power communication suitable for dense urban deployments…"</p>
+        </div>
+        <div class="flex gap-1 shrink-0">
+          <span class="badge badge-xs border border-base-content/20 text-base-content/50 bg-transparent">LoRa</span>
+          <span class="badge badge-xs border border-base-content/20 text-base-content/50 bg-transparent">Infra</span>
+        </div>
+      </div>
+      <div class="divider my-0 opacity-20"></div>
+      <div id="note-populated"></div>
+    </div>
+
+    <!-- SQLite output -->
+    <div class="bg-base-200 border border-base-300 rounded p-4">
+      <p class="mono text-xs opacity-40 uppercase tracking-wider mb-2">SQLite / LLM context — raw value</p>
+      <pre class="code-block opacity-70">content_md TEXT:
+"Compare with **FlexiBLE** BLE approach — very different power/range tradeoff.
+
+- LoRa: ~10km range, kb/s throughput
+- BLE: ~10m range, Mb/s throughput
+
+Relevant for *Manoomin* deployments where gateway placement is constrained."</pre>
+    </div>
+  </div>
+</section>
+
+
+<!-- ════════════════════════════════════════
+     VUE + PINIA SECTIONS
+════════════════════════════════════════ -->
+<div class="border-t-2 border-secondary/30 pt-2">
+  <p class="mono text-xs text-secondary/50 uppercase tracking-widest">Vue + Pinia Architecture</p>
+</div>
+
+
+<!-- §14 COMPONENT TREE -->
+<section id="s14">
+  <h2 class="mono text-xs text-secondary tracking-widest uppercase mb-1">§14 — Vue Component Tree</h2>
+  <p class="text-xs opacity-40 mb-6">How the app decomposes into single-file components (.vue)</p>
+
+  <div class="bg-base-200 border border-base-300 rounded p-5 mb-5 font-mono text-xs leading-loose">
+    <p><span class="text-secondary">App.vue</span></p>
+    <p class="pl-4">├─ <span class="text-primary">AppNavbar.vue</span> <span class="opacity-35">— tabs, page nav, toolbar actions</span></p>
+    <p class="pl-4">└─ <span class="text-accent">WorkspaceLayout.vue</span> <span class="opacity-35">— 3-col flex container</span></p>
+    <p class="pl-12">├─ <span class="text-primary">PaperList.vue</span> <span class="opacity-35">— search, filter, list</span></p>
+    <p class="pl-20">└─ <span class="opacity-55">PaperListItem.vue</span></p>
+    <p class="pl-12">├─ <span class="text-primary">PdfViewer.vue</span> <span class="opacity-35">— PDF.js canvas + annotation layer</span></p>
+    <p class="pl-20">├─ <span class="opacity-55">PdfToolbar.vue</span></p>
+    <p class="pl-20">└─ <span class="opacity-55">AnnotationOverlay.vue</span></p>
+    <p class="pl-12">└─ <span class="text-primary">DetailPanel.vue</span> <span class="opacity-35">— tabs: Details / Screening / Annotations</span></p>
+    <p class="pl-20">├─ <span class="opacity-55">PaperDetails.vue</span></p>
+    <p class="pl-20">├─ <span class="opacity-55">AnnotationList.vue</span></p>
+    <p class="pl-28">└─ <span class="opacity-55">MarkdownNote.vue</span> <span class="opacity-30">← §13</span></p>
+    <p class="pl-20">└─ <span class="opacity-55">CodeBuilderModal.vue</span></p>
+    <p class="pl-4 pt-1">└─ <span class="text-warning">ChatPanel.vue</span> <span class="opacity-35">— slides over detail panel</span></p>
+  </div>
+
+  <!-- Component contracts table -->
+  <p class="mono text-xs opacity-40 uppercase tracking-widest mb-3">Component contracts — props / emits / store reads</p>
+  <div class="overflow-x-auto">
+    <table class="table table-xs w-full text-xs">
+      <thead><tr class="border-b border-base-300 text-base-content/40">
+        <th class="mono font-normal">Component</th>
+        <th class="mono font-normal">Props</th>
+        <th class="mono font-normal">Emits</th>
+        <th class="mono font-normal">Store reads</th>
+      </tr></thead>
+      <tbody class="divide-y divide-base-300">
+        <tr><td class="mono text-primary py-2">PaperList</td><td class="opacity-55">—</td><td class="opacity-55">—</td><td class="opacity-55">workspace.papers</td></tr>
+        <tr><td class="mono text-primary py-2">PdfViewer</td><td class="opacity-55">paperId</td><td class="opacity-55">annotate(sel)</td><td class="opacity-55">workspace.activePaper</td></tr>
+        <tr><td class="mono text-primary py-2">DetailPanel</td><td class="opacity-55">—</td><td class="opacity-55">—</td><td class="opacity-55">workspace.activeAnnotation, codebook.codes</td></tr>
+        <tr><td class="mono text-primary py-2">MarkdownNote</td><td class="opacity-55">annotationId</td><td class="opacity-55">save(md)</td><td class="opacity-55">workspace.updateNote(id, md)</td></tr>
+        <tr><td class="mono text-primary py-2">CodeBuilderModal</td><td class="opacity-55">—</td><td class="opacity-55">close()</td><td class="opacity-55">codebook.codes</td></tr>
+        <tr><td class="mono text-primary py-2">ChatPanel</td><td class="opacity-55">—</td><td class="opacity-55">—</td><td class="opacity-55">workspace.activePaper, chat.messages</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- SFC anatomy -->
+  <p class="mono text-xs opacity-40 uppercase tracking-widest mb-3 mt-6">Single-file component anatomy</p>
+  <div class="code-block"><span class="tok-comment">&lt;!-- AnnotationList.vue --&gt;</span>
+<span class="tok-p">&lt;</span><span class="tok-kw">script</span> setup<span class="tok-p">&gt;</span>
+<span class="tok-kw">import</span> { computed } <span class="tok-kw">from</span> <span class="tok-str">'vue'</span>
+<span class="tok-kw">import</span> { useWorkspaceStore } <span class="tok-kw">from</span> <span class="tok-str">'@/stores/workspace'</span>
+<span class="tok-kw">import</span> MarkdownNote <span class="tok-kw">from</span> <span class="tok-str">'./MarkdownNote.vue'</span>
+
+<span class="tok-kw">const</span> workspace    = <span class="tok-fn">useWorkspaceStore</span>()
+<span class="tok-kw">const</span> annotations  = <span class="tok-fn">computed</span>(() =&gt; workspace.annotationsForActivePaper)
+<span class="tok-p">&lt;/</span><span class="tok-kw">script</span><span class="tok-p">&gt;</span>
+
+<span class="tok-p">&lt;</span><span class="tok-kw">template</span><span class="tok-p">&gt;</span>
+  <span class="tok-p">&lt;</span>div <span class="tok-kw">v-for</span>=<span class="tok-str">"ann in annotations"</span> :key=<span class="tok-str">"ann.id"</span><span class="tok-p">&gt;</span>
+    <span class="tok-p">&lt;</span>AnnotationRegion :<span class="tok-kw">annotation</span>=<span class="tok-str">"ann"</span> <span class="tok-p">/&gt;</span>
+    <span class="tok-p">&lt;</span>MarkdownNote :<span class="tok-kw">annotation-id</span>=<span class="tok-str">"ann.id"</span> <span class="tok-p">/&gt;</span>
+  <span class="tok-p">&lt;/</span>div<span class="tok-p">&gt;</span>
+<span class="tok-p">&lt;/</span><span class="tok-kw">template</span><span class="tok-p">&gt;</span></div>
+</section>
+
+
+<!-- §15 PINIA STORES -->
+<section id="s15">
+  <h2 class="mono text-xs text-secondary tracking-widest uppercase mb-1">§15 — Pinia Stores</h2>
+  <p class="text-xs opacity-40 mb-6">Three stores cover all shared state across components</p>
+
+  <!-- Store cards -->
+  <div class="grid sm:grid-cols-3 gap-3 mb-6">
+    <div class="bg-base-200 border border-primary/25 rounded p-4">
+      <p class="mono text-xs text-primary font-medium mb-3">useWorkspaceStore</p>
+      <div class="space-y-1 font-mono" style="font-size:11px">
+        <p class="opacity-35 uppercase tracking-widest text-xs mb-1">state</p>
+        <p class="opacity-60">papers: Paper[]</p>
+        <p class="opacity-60">activePaperId: string|null</p>
+        <p class="opacity-60">activeAnnotationId: string|null</p>
+        <p class="opacity-60">annotations: Annotation[]</p>
+        <p class="opacity-35 uppercase tracking-widest text-xs mt-2 mb-1">actions</p>
+        <p class="opacity-60">selectPaper(id)</p>
+        <p class="opacity-60">addAnnotation(ann)</p>
+        <p class="opacity-60">updateNote(id, md)</p>
+        <p class="opacity-35 uppercase tracking-widest text-xs mt-2 mb-1">getters</p>
+        <p class="opacity-60">activePaper</p>
+        <p class="opacity-60">annotationsForActivePaper</p>
+      </div>
+    </div>
+    <div class="bg-base-200 border border-secondary/25 rounded p-4">
+      <p class="mono text-xs text-secondary font-medium mb-3">useCodebookStore</p>
+      <div class="space-y-1 font-mono" style="font-size:11px">
+        <p class="opacity-35 uppercase tracking-widest text-xs mb-1">state</p>
+        <p class="opacity-60">codes: Code[]</p>
+        <p class="opacity-60">activeCodeId: string</p>
+        <p class="opacity-35 uppercase tracking-widest text-xs mt-2 mb-1">actions</p>
+        <p class="opacity-60">addCode(label, color)</p>
+        <p class="opacity-60">addSubCode(parentId, label)</p>
+        <p class="opacity-60">removeCode(id)</p>
+        <p class="opacity-60">setActiveCode(id)</p>
+        <p class="opacity-60">reorderCodes(from, to)</p>
+        <p class="opacity-35 uppercase tracking-widest text-xs mt-2 mb-1">getters</p>
+        <p class="opacity-60">activeCode</p>
+        <p class="opacity-60">topLevelCodes</p>
+      </div>
+    </div>
+    <div class="bg-base-200 border border-accent/25 rounded p-4">
+      <p class="mono text-xs text-accent font-medium mb-3">useChatStore</p>
+      <div class="space-y-1 font-mono" style="font-size:11px">
+        <p class="opacity-35 uppercase tracking-widest text-xs mb-1">state</p>
+        <p class="opacity-60">sessions: ChatSession[]</p>
+        <p class="opacity-60">activeSessionId: string</p>
+        <p class="opacity-60">provider: 'ollama'|'openai'</p>
+        <p class="opacity-60">model: string</p>
+        <p class="opacity-60">streaming: boolean</p>
+        <p class="opacity-35 uppercase tracking-widest text-xs mt-2 mb-1">actions</p>
+        <p class="opacity-60">sendMessage(text)</p>
+        <p class="opacity-60">newSession()</p>
+        <p class="opacity-60">setProvider(p, m)</p>
+        <p class="opacity-35 uppercase tracking-widest text-xs mt-2 mb-1">getters</p>
+        <p class="opacity-60">activeMessages</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Store implementation -->
+  <p class="mono text-xs opacity-40 uppercase tracking-widest mb-3">useWorkspaceStore — Composition API style</p>
+  <div class="code-block mb-6"><span class="tok-comment">// stores/workspace.ts</span>
+<span class="tok-kw">import</span> { defineStore } <span class="tok-kw">from</span> <span class="tok-str">'pinia'</span>
+<span class="tok-kw">import</span> { ref, computed } <span class="tok-kw">from</span> <span class="tok-str">'vue'</span>
+
+<span class="tok-kw">export const</span> <span class="tok-fn">useWorkspaceStore</span> = <span class="tok-fn">defineStore</span>(<span class="tok-str">'workspace'</span>, () =&gt; {
+  <span class="tok-kw">const</span> papers        = <span class="tok-fn">ref</span>&lt;<span class="tok-type">Paper</span>[]&gt;([])
+  <span class="tok-kw">const</span> activePaperId = <span class="tok-fn">ref</span>&lt;<span class="tok-type">string</span> | <span class="tok-type">null</span>&gt;(<span class="tok-kw">null</span>)
+  <span class="tok-kw">const</span> annotations   = <span class="tok-fn">ref</span>&lt;<span class="tok-type">Annotation</span>[]&gt;([])
+
+  <span class="tok-kw">const</span> activePaper = <span class="tok-fn">computed</span>(() =&gt;
+    papers.value.<span class="tok-fn">find</span>(p =&gt; p.id === activePaperId.value)
+  )
+  <span class="tok-kw">const</span> annotationsForActivePaper = <span class="tok-fn">computed</span>(() =&gt;
+    annotations.value.<span class="tok-fn">filter</span>(a =&gt; a.paperId === activePaperId.value)
+  )
+
+  <span class="tok-kw">function</span> <span class="tok-fn">selectPaper</span>(id: <span class="tok-type">string</span>) {
+    activePaperId.value = id
+  }
+
+  <span class="tok-kw">function</span> <span class="tok-fn">updateNote</span>(annotationId: <span class="tok-type">string</span>, md: <span class="tok-type">string</span>) {
+    <span class="tok-kw">const</span> ann = annotations.value.<span class="tok-fn">find</span>(a =&gt; a.id === annotationId)
+    <span class="tok-kw">if</span> (ann) ann.contentMd = md
+    <span class="tok-comment">// db.run('UPDATE annotations SET content_md=? WHERE id=?', [md, id])</span>
+  }
+
+  <span class="tok-kw">return</span> {
+    papers, activePaperId, annotations,
+    activePaper, annotationsForActivePaper,
+    selectPaper, updateNote,
+  }
+})</div>
+
+  <!-- MarkdownNote migrated -->
+  <p class="mono text-xs opacity-40 uppercase tracking-widest mb-3">MarkdownNote.vue — Alpine → Vue migration</p>
+  <div class="grid sm:grid-cols-2 gap-3 mb-3">
+    <div>
+      <p class="mono text-xs text-error/60 mb-2">Before (Alpine)</p>
+      <div class="code-block text-xs" style="font-size:10.5px"><span class="tok-comment">&lt;!-- local state, no store --&gt;</span>
+&lt;div x-data="{
+  raw: '',
+  preview: false,
+  save() {
+    <span class="tok-comment">// no way to persist!</span>
+  }
+}"&gt;</div>
+    </div>
+    <div>
+      <p class="mono text-xs text-accent/60 mb-2">After (Vue + Pinia)</p>
+      <div class="code-block text-xs" style="font-size:10.5px"><span class="tok-comment">&lt;!-- props in, store action out --&gt;</span>
+<span class="tok-kw">const</span> props = <span class="tok-fn">defineProps</span>&lt;{
+  annotationId: <span class="tok-type">string</span>
+}&gt;()
+<span class="tok-kw">const</span> ws = <span class="tok-fn">useWorkspaceStore</span>()
+<span class="tok-kw">const</span> raw = <span class="tok-fn">ref</span>(ws.<span class="tok-fn">getNote</span>(props.annotationId))
+<span class="tok-kw">const</span> <span class="tok-fn">save</span> = () =&gt; ws.<span class="tok-fn">updateNote</span>(props.annotationId, raw.value)</div>
+    </div>
+  </div>
+</section>
+
+
+<!-- §16 LIVE VUE DEMO -->
+<section id="s16">
+  <h2 class="mono text-xs text-secondary tracking-widest uppercase mb-1">§16 — Live Vue 3 Demo</h2>
+  <p class="text-xs opacity-40 mb-6">The MarkdownNote component is mounted as a real Vue app — type and save to see the simulated Pinia state update below</p>
+
+  <div class="max-w-xl space-y-4" id="vue-demo">
+    <div class="bg-base-200 border border-base-300 rounded p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <p class="mono text-xs opacity-40 uppercase tracking-widest">MarkdownNote.vue — live instance</p>
+        <span class="badge badge-xs bg-secondary/15 text-secondary border-0 mono">Vue 3</span>
+      </div>
+      <div class="divider my-0 opacity-20"></div>
+      <div id="vue-note-mount"></div>
+    </div>
+
+    <!-- Simulated Pinia devtools -->
+    <div class="bg-base-200 border border-base-300 rounded p-4">
+      <div class="flex items-center justify-between mb-2">
+        <p class="mono text-xs opacity-40 uppercase tracking-widest">Pinia devtools — workspace store</p>
+        <span class="badge badge-xs bg-base-300 text-base-content/40 border-0 mono">live</span>
+      </div>
+      <pre id="pinia-readout" class="code-block text-xs opacity-60" style="min-height:56px"><span class="tok-comment">// type in the editor above — state updates on blur / ⌘S</span></pre>
+    </div>
+  </div>
+</section>
+
+
+</div><!-- /max-w -->
+</main>
+</div><!-- /flex -->
+
+<footer class="border-t border-base-300 mt-16 px-6 py-4 flex justify-between items-center">
+  <span class="mono text-xs opacity-30">Lit Review Coding — Vue 3 + Pinia + DaisyUI</span>
+  <span class="mono text-xs opacity-30">Style Guide v2</span>
+</footer>
+
+
+<!-- ══ VUE COMPONENT SETUP ══ -->
+<script>
+const { createApp, ref, computed } = Vue
+
+// Lightweight shared state (stand-in for Pinia in CDN context)
+const store = {
+  notes: ref({}),
+  updateNote(id, md) {
+    this.notes.value[id] = md
+    const el = document.getElementById('pinia-readout')
+    if (el) {
+      const escaped = md.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')
+      el.innerHTML =
+        `<span class="tok-comment">// useWorkspaceStore().annotations['${id}'].contentMd</span>\n` +
+        `<span class="tok-str">"${escaped.substring(0,220)}${md.length > 220 ? '…' : ''}"</span>`
+    }
+  }
+}
+
+// ── MarkdownNote component ──────────────────────────────────
+const MarkdownNote = {
+  props: {
+    annotationId: { type: String, default: 'anon' },
+    initial:      { type: String, default: '' }
+  },
+  setup(props) {
+    const raw      = ref(props.initial)
+    const preview  = ref(false)
+    const saved    = ref(false)
+    const rendered = computed(() => marked.parse(raw.value || '*No notes yet.*'))
+
+    function save() {
+      store.updateNote(props.annotationId, raw.value)
+      saved.value = true
+      setTimeout(() => saved.value = false, 1500)
+    }
+    function handleKey(e) {
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        const s = e.target.selectionStart
+        raw.value = raw.value.substring(0, s) + '  ' + raw.value.substring(e.target.selectionEnd)
+        setTimeout(() => { e.target.selectionStart = e.target.selectionEnd = s + 2 }, 0)
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); save() }
+    }
+    return { raw, preview, saved, rendered, save, handleKey }
+  },
+  template: `
+    <div>
+      <div class="flex items-center justify-between mb-1.5">
+        <div class="flex items-center gap-1.5">
+          <span class="mono text-xs opacity-40">Notes</span>
+          <div class="join">
+            <button class="btn btn-xs join-item" :class="!preview ? 'btn-neutral' : 'btn-ghost'" @click="preview=false">Edit</button>
+            <button class="btn btn-xs join-item" :class="preview  ? 'btn-neutral' : 'btn-ghost'" @click="preview=true">Preview</button>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="mono text-xs text-success transition-opacity duration-300" :class="saved ? 'opacity-100' : 'opacity-0'">saved ✓</span>
+          <button class="btn btn-ghost btn-xs btn-square opacity-40 hover:opacity-100" @click="save" title="⌘S">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+              <polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <textarea v-if="!preview" v-model="raw" @keydown="handleKey" @blur="save"
+        class="textarea textarea-bordered w-full text-xs font-mono leading-relaxed focus:outline-none bg-base-100"
+        placeholder="Notes… markdown supported&#10;&#10;**bold**, *italic*, \`code\`, - lists"
+        rows="3" spellcheck="false"></textarea>
+      <div v-else v-html="rendered"
+        class="min-h-12 px-3 py-2 rounded bg-base-100 border border-base-300 text-xs leading-relaxed opacity-80"></div>
+      <p v-if="!preview" class="mono text-xs opacity-30 mt-1">**bold** · *italic* · \`code\` · - list · ⌘S</p>
+    </div>
+  `
+}
+
+// Mount §13 empty note
+createApp(MarkdownNote, { annotationId: 's13-empty' }).mount('#note-empty')
+
+// Mount §13 pre-populated
+createApp(MarkdownNote, {
+  annotationId: 's13-lora',
+  initial: 'Compare with **FlexiBLE** BLE approach — very different power/range tradeoff.\n\n- LoRa: ~10km range, kb/s throughput\n- BLE: ~10m range, Mb/s throughput\n\nRelevant for *Manoomin* deployments where gateway placement is constrained.'
+}).mount('#note-populated')
+
+// Mount §16 demo
+createApp(MarkdownNote, { annotationId: 'demo' }).mount('#vue-note-mount')
+</script>
+
+</body>
+</html>

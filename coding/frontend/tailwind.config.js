@@ -1,0 +1,60 @@
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: ['./index.html', './src/**/*.{vue,js}'],
+  theme: {
+    extend: {
+      fontFamily: {
+        sans: ['IBM Plex Sans', 'system-ui', 'sans-serif'],
+        mono: ['IBM Plex Mono', 'monospace'],
+      },
+    },
+  },
+  plugins: [require('daisyui')],
+  daisyui: {
+    themes: [
+      {
+        dark: {
+          'primary': '#38bdf8',
+          'primary-content': '#0c1a26',
+          'secondary': '#a78bfa',
+          'secondary-content': '#1a0a2e',
+          'accent': '#34d399',
+          'accent-content': '#042f1e',
+          'neutral': '#2a303c',
+          'neutral-content': '#a6adc8',
+          'base-100': '#111318',
+          'base-200': '#191c23',
+          'base-300': '#20242e',
+          'base-content': '#cdd5e0',
+          'success': '#34d399',
+          'warning': '#fbbf24',
+          'error': '#f87171',
+          '--rounded-box': '0.375rem',
+          '--rounded-btn': '0.25rem',
+          '--rounded-badge': '0.25rem',
+        },
+        light: {
+          'primary': '#0369a1',
+          'primary-content': '#f0f9ff',
+          'secondary': '#6d28d9',
+          'secondary-content': '#faf5ff',
+          'accent': '#059669',
+          'accent-content': '#ecfdf5',
+          'neutral': '#e2e5ed',
+          'neutral-content': '#374151',
+          'base-100': '#f8f9fb',
+          'base-200': '#eef0f5',
+          'base-300': '#e2e5ed',
+          'base-content': '#1e2330',
+          'success': '#059669',
+          'warning': '#d97706',
+          'error': '#dc2626',
+          '--rounded-box': '0.375rem',
+          '--rounded-btn': '0.25rem',
+          '--rounded-badge': '0.25rem',
+        },
+      },
+    ],
+    darkTheme: 'dark',
+  },
+}
