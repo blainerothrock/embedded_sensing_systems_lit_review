@@ -116,6 +116,12 @@ body.resizing {
     z-index: 10;
 }
 
+/* Disable pointer events during CSS transform zoom (coordinates misaligned) */
+.pdf-pages-zooming .textLayer,
+.pdf-pages-zooming .pdf-annotation-layer {
+    pointer-events: none !important;
+}
+
 /* Chat quote blocks */
 .chat-quote {
     border-left: 3px solid oklch(var(--p));

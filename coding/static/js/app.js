@@ -10,6 +10,10 @@ let _zoomRenderTimer = null;
 let _zoomAnchor = null;
 // Debounce timers for matrix cell saves
 let _matrixSaveTimers = {};
+// Debounce timer for matrix filter recomputation
+let _matrixFilterTimer = null;
+// Raw matrix data kept outside Alpine to avoid deep Proxy wrapping (perf critical)
+let _matrixRaw = null; // { columns, papers, cells, evidence }
 
 async function ensurePdfJs() {
     if (pdfjsLib) return pdfjsLib;
@@ -55,9 +59,11 @@ document.addEventListener("alpine:init", () => {
 
         // PDF state (pdfDoc is kept outside Alpine as _pdfDoc to avoid Proxy issues)
         pdfScale: 1.0,
+        _renderedScale: 1.0, // scale at which canvases were last rendered
         pdfPageCount: 0,
         pdfCurrentPage: 1,
         pdfRendering: false,
+        _scrollRaf: null,
 
         // Coding state (v2: hierarchical codes on annotations)
         codes: [],              // top-level codes with children
@@ -68,12 +74,30 @@ document.addEventListener("alpine:init", () => {
         newCodeName: "",
         newSubCodeNames: {},    // {parent_code_id: "name"}
         matrixColumns: [],      // matrix column definitions with options and linked codes
-        matrixData: null,
+        matrixLoaded: false,    // flag: _matrixRaw is populated
         paperMatrixCells: {},  // {column_id: {value, notes}} for selected paper
         showColumnEditor: false,
         newColumnName: "",
         newColumnType: "enum_single",
         newOptionValues: {},   // {column_id: "value"}
+        // Matrix view parameterization
+        metadataColumns: [
+            { key: "title", label: "Paper", pinned: true },
+            { key: "author", label: "Author", pinned: false },
+            { key: "year", label: "Year", pinned: true },
+            { key: "venue", label: "Venue", pinned: false },
+            { key: "entry_type", label: "Type", pinned: false },
+            { key: "phase3_decision", label: "Status", pinned: false },
+        ],
+        visibleMetaCols: JSON.parse(localStorage.getItem("matrixMetaCols") || '["title","year"]'),
+        visibleMatrixCols: JSON.parse(localStorage.getItem("matrixCols") || "null"),
+        matrixStatusFilter: localStorage.getItem("matrixStatusFilter") || "all",
+        matrixColFilters: {},
+        matrixSort: { key: null, dir: "asc" }, // { key: meta key or col id, dir: "asc"|"desc" }
+        matrixViewPapers: [],  // cached filtered+sorted result (plain objects, not proxied)
+        matrixViewColumns: [], // cached visible matrix columns
+        matrixTotalPapers: 0,  // total before filtering
+        editingCell: null,
 
         // Themes view
         selectedThemeCodeId: null,
@@ -129,6 +153,9 @@ document.addEventListener("alpine:init", () => {
                 document.documentElement.setAttribute("data-theme", val);
             });
             document.documentElement.setAttribute("data-theme", this.theme);
+            this.$watch("visibleMetaCols", v => localStorage.setItem("matrixMetaCols", JSON.stringify(v)));
+            this.$watch("visibleMatrixCols", v => localStorage.setItem("matrixCols", JSON.stringify(v)));
+            this.$watch("matrixStatusFilter", v => { localStorage.setItem("matrixStatusFilter", v); this.loadMatrix(); });
             // Global keyboard shortcuts
             document.addEventListener("keydown", (e) => {
                 // Don't intercept when typing in inputs
@@ -294,7 +321,11 @@ document.addEventListener("alpine:init", () => {
                 this.pdfPageCount = _pdfDoc.numPages;
 
                 // Fit to width initially
-                await this.pdfFitWidth();
+                const page = await _pdfDoc.getPage(1);
+                const containerWidth = this.$refs.pdfContainer.clientWidth - 40;
+                const viewport = page.getViewport({ scale: 1.0 });
+                this.pdfScale = containerWidth / viewport.width;
+                await this.buildPageStructure();
             } catch (err) {
                 console.error("Failed to load PDF:", err);
                 this.showToast("Failed to load PDF", "error");
@@ -310,10 +341,8 @@ document.addEventListener("alpine:init", () => {
             this.pdfCurrentPage = 1;
         },
 
-        async renderAllPages() {
-            if (!_pdfDoc || this.pdfRendering) return;
-            this.pdfRendering = true;
-
+        async buildPageStructure() {
+            if (!_pdfDoc) return;
             const container = this.$refs.pdfPages;
             container.innerHTML = "";
             _pageViewports = {};
@@ -326,64 +355,139 @@ document.addEventListener("alpine:init", () => {
                 const pageDiv = document.createElement("div");
                 pageDiv.className = "pdf-page mb-2 shadow-lg";
                 pageDiv.dataset.page = i;
+                pageDiv.dataset.rendered = "false";
                 pageDiv.style.width = viewport.width + "px";
                 pageDiv.style.height = viewport.height + "px";
                 pageDiv.style.position = "relative";
 
-                const canvas = document.createElement("canvas");
-                canvas.width = viewport.width * window.devicePixelRatio;
-                canvas.height = viewport.height * window.devicePixelRatio;
-                canvas.style.width = viewport.width + "px";
-                canvas.style.height = viewport.height + "px";
-
-                const ctx = canvas.getContext("2d");
-                ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-
-                pageDiv.appendChild(canvas);
                 container.appendChild(pageDiv);
-
-                await page.render({
-                    canvasContext: ctx,
-                    viewport: viewport,
-                }).promise;
-
-                // Text layer for selection (PDF.js v5 requires CSS custom properties)
-                const textContent = await page.getTextContent();
-                const textLayerDiv = document.createElement("div");
-                textLayerDiv.className = "textLayer";
-                textLayerDiv.style.setProperty("--scale-factor", viewport.scale);
-                textLayerDiv.style.setProperty("--total-scale-factor", viewport.scale);
-                textLayerDiv.style.setProperty("--scale-round-x", "1px");
-                textLayerDiv.style.setProperty("--scale-round-y", "1px");
-                pageDiv.appendChild(textLayerDiv);
-
-                const textLayer = new pdfjsLib.TextLayer({
-                    textContentSource: textContent,
-                    container: textLayerDiv,
-                    viewport: viewport,
-                });
-                textLayer.render();
-
-                // Annotation overlay layer
-                const annotOverlay = document.createElement("div");
-                annotOverlay.className = "pdf-annotation-layer";
-                annotOverlay.style.width = viewport.width + "px";
-                annotOverlay.style.height = viewport.height + "px";
-                pageDiv.appendChild(annotOverlay);
             }
 
-            // Render existing annotations
-            this.renderAnnotationOverlays();
+            this._renderedScale = this.pdfScale;
+            await this.renderVisiblePages();
+        },
+
+        _getVisiblePages() {
+            const container = this.$refs.pdfContainer;
+            if (!container) return new Set();
+            const pages = container.querySelectorAll(".pdf-page");
+            const visibleSet = new Set();
+            const containerRect = container.getBoundingClientRect();
+            const bufferPx = containerRect.height; // 1 viewport height buffer
+
+            for (const pageDiv of pages) {
+                const pageRect = pageDiv.getBoundingClientRect();
+                if (pageRect.bottom > containerRect.top - bufferPx &&
+                    pageRect.top < containerRect.bottom + bufferPx) {
+                    visibleSet.add(parseInt(pageDiv.dataset.page));
+                }
+            }
+            return visibleSet;
+        },
+
+        async renderVisiblePages(forceRerender = false) {
+            if (!_pdfDoc || this.pdfRendering) return;
+            this.pdfRendering = true;
+
+            const visibleSet = this._getVisiblePages();
+            const container = this.$refs.pdfContainer;
+
+            // Render newly visible pages in parallel
+            const renderPromises = [];
+            for (const pageNum of visibleSet) {
+                const pageDiv = container.querySelector(`.pdf-page[data-page="${pageNum}"]`);
+                if (!pageDiv) continue;
+                if (pageDiv.dataset.rendered === "true" && !forceRerender) continue;
+                renderPromises.push(this._renderSinglePage(pageNum, pageDiv));
+            }
+            await Promise.all(renderPromises);
+
+            // Unrender far-away pages to save memory
+            const allPages = container.querySelectorAll(".pdf-page");
+            for (const pageDiv of allPages) {
+                const num = parseInt(pageDiv.dataset.page);
+                if (!visibleSet.has(num) && pageDiv.dataset.rendered === "true") {
+                    this._unrenderPage(pageDiv);
+                }
+            }
+
+            this.renderAnnotationOverlays(visibleSet);
             this.pdfRendering = false;
+        },
+
+        async _renderSinglePage(pageNum, pageDiv) {
+            const page = await _pdfDoc.getPage(pageNum);
+            const viewport = page.getViewport({ scale: this.pdfScale });
+            _pageViewports[pageNum] = viewport;
+
+            // Clear any existing content
+            pageDiv.innerHTML = "";
+            pageDiv.style.width = viewport.width + "px";
+            pageDiv.style.height = viewport.height + "px";
+
+            const canvas = document.createElement("canvas");
+            canvas.width = viewport.width * window.devicePixelRatio;
+            canvas.height = viewport.height * window.devicePixelRatio;
+            canvas.style.width = viewport.width + "px";
+            canvas.style.height = viewport.height + "px";
+
+            const ctx = canvas.getContext("2d");
+            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+
+            pageDiv.appendChild(canvas);
+
+            await page.render({
+                canvasContext: ctx,
+                viewport: viewport,
+            }).promise;
+
+            // Text layer
+            const textContent = await page.getTextContent();
+            const textLayerDiv = document.createElement("div");
+            textLayerDiv.className = "textLayer";
+            textLayerDiv.style.setProperty("--scale-factor", viewport.scale);
+            textLayerDiv.style.setProperty("--total-scale-factor", viewport.scale);
+            textLayerDiv.style.setProperty("--scale-round-x", "1px");
+            textLayerDiv.style.setProperty("--scale-round-y", "1px");
+            pageDiv.appendChild(textLayerDiv);
+
+            const textLayer = new pdfjsLib.TextLayer({
+                textContentSource: textContent,
+                container: textLayerDiv,
+                viewport: viewport,
+            });
+            textLayer.render();
+
+            // Annotation overlay layer
+            const annotOverlay = document.createElement("div");
+            annotOverlay.className = "pdf-annotation-layer";
+            annotOverlay.style.width = viewport.width + "px";
+            annotOverlay.style.height = viewport.height + "px";
+            pageDiv.appendChild(annotOverlay);
+
+            pageDiv.dataset.rendered = "true";
+        },
+
+        _unrenderPage(pageDiv) {
+            pageDiv.innerHTML = "";
+            pageDiv.dataset.rendered = "false";
         },
 
         // --- Annotation overlay rendering ---
 
-        renderAnnotationOverlays() {
-            // Clear existing overlays
-            document.querySelectorAll(".pdf-annotation-layer").forEach(
-                (el) => (el.innerHTML = "")
-            );
+        renderAnnotationOverlays(visibleSet) {
+            // If no visible set provided, render for all rendered pages
+            if (!visibleSet) {
+                visibleSet = this._getVisiblePages();
+            }
+
+            // Clear overlays only on visible pages
+            for (const pageNum of visibleSet) {
+                const overlay = document.querySelector(
+                    `.pdf-page[data-page="${pageNum}"] .pdf-annotation-layer`
+                );
+                if (overlay) overlay.innerHTML = "";
+            }
 
             for (const ann of this.paperAnnotations) {
                 const rects = JSON.parse(ann.rects_json || "[]");
@@ -391,8 +495,8 @@ document.addEventListener("alpine:init", () => {
                 const isArea = ann.annotation_type === "area";
 
                 for (const rect of rects) {
-                    // Each rect may have its own page, or default to annotation's page
                     const pageNum = rect.page || ann.page_number;
+                    if (!visibleSet.has(pageNum)) continue;
                     const viewport = _pageViewports[pageNum];
                     if (!viewport) continue;
                     const overlay = document.querySelector(
@@ -467,6 +571,63 @@ document.addEventListener("alpine:init", () => {
             event.preventDefault();
         },
 
+        _applyZoomVisual() {
+            const pagesEl = this.$refs.pdfPages;
+            if (!pagesEl || this._renderedScale === 0) return;
+            const transformScale = this.pdfScale / this._renderedScale;
+            pagesEl.style.transformOrigin = "top center";
+            pagesEl.style.transform = `scale(${transformScale})`;
+            pagesEl.classList.add("pdf-pages-zooming");
+        },
+
+        async _updatePageDimensions() {
+            // Update all page div sizes and viewports without destroying content
+            const container = this.$refs.pdfPages;
+            if (!container || !_pdfDoc) return;
+
+            for (let i = 1; i <= _pdfDoc.numPages; i++) {
+                const page = await _pdfDoc.getPage(i);
+                const viewport = page.getViewport({ scale: this.pdfScale });
+                _pageViewports[i] = viewport;
+
+                const pageDiv = container.querySelector(`.pdf-page[data-page="${i}"]`);
+                if (!pageDiv) continue;
+                pageDiv.style.width = viewport.width + "px";
+                pageDiv.style.height = viewport.height + "px";
+                // Mark as stale — will be re-rendered by renderVisiblePages
+                pageDiv.dataset.rendered = "false";
+            }
+
+            this._renderedScale = this.pdfScale;
+        },
+
+        _scheduleZoomRender(anchor = null) {
+            clearTimeout(_zoomRenderTimer);
+            _zoomRenderTimer = setTimeout(async () => {
+                _zoomAnchor = null;
+
+                // Update dimensions in-place (no DOM destruction)
+                await this._updatePageDimensions();
+
+                // Clear CSS transform now that dimensions match target scale
+                const pagesEl = this.$refs.pdfPages;
+                if (pagesEl) {
+                    pagesEl.style.transform = "";
+                    pagesEl.classList.remove("pdf-pages-zooming");
+                }
+
+                // Restore scroll position before rendering (so visible page calc is correct)
+                if (anchor) {
+                    const container = this.$refs.pdfContainer;
+                    container.scrollLeft = anchor.contentX * this.pdfScale - anchor.cursorX;
+                    container.scrollTop = anchor.contentY * this.pdfScale - anchor.cursorY;
+                }
+
+                // Re-render visible pages at the new scale (force since scale changed)
+                await this.renderVisiblePages(true);
+            }, 300);
+        },
+
         onPdfWheel(event) {
             const container = this.$refs.pdfContainer;
             if (!container || !_pdfDoc) return;
@@ -477,13 +638,11 @@ document.addEventListener("alpine:init", () => {
             if (newScale === oldScale) return;
 
             // On first tick of a zoom gesture, capture the anchor point
-            // in PDF-content space (independent of scale)
             if (!_zoomAnchor) {
                 const rect = container.getBoundingClientRect();
                 const cursorX = event.clientX - rect.left;
                 const cursorY = event.clientY - rect.top;
                 _zoomAnchor = {
-                    // Content-space point = scroll + cursor, normalized by scale
                     contentX: (container.scrollLeft + cursorX) / oldScale,
                     contentY: (container.scrollTop + cursorY) / oldScale,
                     cursorX,
@@ -492,18 +651,8 @@ document.addEventListener("alpine:init", () => {
             }
 
             this.pdfScale = newScale;
-
-            // Debounce re-render
-            clearTimeout(_zoomRenderTimer);
-            _zoomRenderTimer = setTimeout(async () => {
-                const anchor = _zoomAnchor;
-                _zoomAnchor = null;
-                await this.renderAllPages();
-                if (anchor) {
-                    container.scrollLeft = anchor.contentX * this.pdfScale - anchor.cursorX;
-                    container.scrollTop = anchor.contentY * this.pdfScale - anchor.cursorY;
-                }
-            }, 100);
+            this._applyZoomVisual();
+            this._scheduleZoomRender(_zoomAnchor);
         },
 
         onTextSelection(event) {
@@ -657,31 +806,39 @@ document.addEventListener("alpine:init", () => {
             }
         },
 
-        async pdfZoomIn() {
+        pdfZoomIn() {
             this.pdfScale = Math.min(this.pdfScale + 0.25, 4.0);
-
-            await this.renderAllPages();
+            this._applyZoomVisual();
+            this._scheduleZoomRender();
         },
 
-        async pdfZoomOut() {
+        pdfZoomOut() {
             this.pdfScale = Math.max(this.pdfScale - 0.25, 0.5);
-
-            await this.renderAllPages();
+            this._applyZoomVisual();
+            this._scheduleZoomRender();
         },
 
         async pdfFitWidth() {
             if (!_pdfDoc) return;
             const page = await _pdfDoc.getPage(1);
             const container = this.$refs.pdfContainer;
-            const containerWidth = container.clientWidth - 40; // padding
+            const containerWidth = container.clientWidth - 40;
             const viewport = page.getViewport({ scale: 1.0 });
             this.pdfScale = containerWidth / viewport.width;
-
-            await this.renderAllPages();
+            this._applyZoomVisual();
+            this._scheduleZoomRender();
         },
 
         onPdfScroll() {
-            // Update current page based on scroll position
+            if (this._scrollRaf) return;
+            this._scrollRaf = requestAnimationFrame(() => {
+                this._scrollRaf = null;
+                this._updateCurrentPage();
+                this.renderVisiblePages();
+            });
+        },
+
+        _updateCurrentPage() {
             const container = this.$refs.pdfContainer;
             const pages = container.querySelectorAll(".pdf-page");
             const scrollTop = container.scrollTop + container.clientHeight / 3;
@@ -1274,15 +1431,180 @@ document.addEventListener("alpine:init", () => {
         },
 
         async loadMatrix() {
-            const res = await fetch("api/matrix");
+            const params = new URLSearchParams();
+            if (this.matrixStatusFilter !== "all") params.set("status", this.matrixStatusFilter);
+            const res = await fetch("api/matrix?" + params);
             if (!res.ok) { this.showToast("Failed to load matrix", "error"); return; }
-            this.matrixData = await res.json();
+            // Store raw data OUTSIDE Alpine to avoid deep Proxy wrapping
+            _matrixRaw = await res.json();
+            this.matrixLoaded = true;
+            this.matrixTotalPapers = _matrixRaw.papers.length;
+            this.matrixColFilters = {};
+            this._recomputeMatrixView();
+        },
+
+        get activeMetaCols() {
+            return this.metadataColumns.filter(mc => this.visibleMetaCols.includes(mc.key));
+        },
+
+        _updateVisibleColumns() {
+            if (!_matrixRaw) { this.matrixViewColumns = []; return; }
+            if (!this.visibleMatrixCols) {
+                this.matrixViewColumns = _matrixRaw.columns;
+            } else {
+                this.matrixViewColumns = _matrixRaw.columns.filter(c => this.visibleMatrixCols.includes(c.id));
+            }
+        },
+
+        // Debounced filter input — called from @input on text filters
+        onMatrixFilterInput(key, value) {
+            this.matrixColFilters[key] = value;
+            clearTimeout(_matrixFilterTimer);
+            _matrixFilterTimer = setTimeout(() => this._recomputeMatrixView(), 150);
+        },
+
+        // Instant filter — called from @change on select filters
+        onMatrixFilterChange(key, value) {
+            this.matrixColFilters[key] = value;
+            this._recomputeMatrixView();
+        },
+
+        _recomputeMatrixView() {
+            if (!_matrixRaw) { this.matrixViewPapers = []; this.matrixViewColumns = []; return; }
+            this._updateVisibleColumns();
+            const metaKeys = new Set(["title", "author", "year", "venue", "entry_type", "phase3_decision"]);
+            const cells = _matrixRaw.cells;
+            const columns = _matrixRaw.columns;
+            // Build active filters once
+            const filters = [];
+            for (const [key, val] of Object.entries(this.matrixColFilters)) {
+                if (!val) continue;
+                const isMetaKey = metaKeys.has(key);
+                const f = { key, lv: val.toLowerCase(), isMetaKey };
+                if (!isMetaKey) {
+                    f.colId = parseInt(key);
+                    f.col = columns.find(c => c.id === f.colId);
+                }
+                filters.push(f);
+            }
+            // Filter
+            let papers = _matrixRaw.papers;
+            if (filters.length > 0) {
+                papers = papers.filter(p => {
+                    for (const f of filters) {
+                        if (f.isMetaKey) {
+                            if (!String(p[f.key] || "").toLowerCase().includes(f.lv)) return false;
+                        } else {
+                            const cellVal = cells[p.id]?.[f.colId]?.value || "";
+                            if (f.col?.column_type === "enum_multi") {
+                                try {
+                                    if (!JSON.parse(cellVal || "[]").some(v => v.toLowerCase().includes(f.lv))) return false;
+                                } catch { return false; }
+                            } else {
+                                if (!cellVal.toLowerCase().includes(f.lv)) return false;
+                            }
+                        }
+                    }
+                    return true;
+                });
+            }
+            // Sort
+            const { key: sortKey, dir } = this.matrixSort;
+            if (sortKey != null) {
+                const mult = dir === "asc" ? 1 : -1;
+                const isMeta = metaKeys.has(sortKey);
+                const sortColId = isMeta ? null : parseInt(sortKey);
+                papers = [...papers].sort((a, b) => {
+                    let va, vb;
+                    if (isMeta) {
+                        va = String(a[sortKey] || "").toLowerCase();
+                        vb = String(b[sortKey] || "").toLowerCase();
+                    } else {
+                        va = (cells[a.id]?.[sortColId]?.value || "").toLowerCase();
+                        vb = (cells[b.id]?.[sortColId]?.value || "").toLowerCase();
+                    }
+                    if (va < vb) return -1 * mult;
+                    if (va > vb) return 1 * mult;
+                    return 0;
+                });
+            }
+            this.matrixViewPapers = papers;
+        },
+
+        toggleMatrixSort(key) {
+            if (this.matrixSort.key === key) {
+                this.matrixSort.dir = this.matrixSort.dir === "asc" ? "desc" : "asc";
+            } else {
+                this.matrixSort = { key, dir: "asc" };
+            }
+            this._recomputeMatrixView();
+        },
+
+        get hasActiveFilters() {
+            return Object.values(this.matrixColFilters).some(v => v);
+        },
+
+        clearMatrixFilters() {
+            this.matrixColFilters = {};
+            this._recomputeMatrixView();
+        },
+
+        toggleMetaCol(key) {
+            const idx = this.visibleMetaCols.indexOf(key);
+            if (idx >= 0) this.visibleMetaCols.splice(idx, 1);
+            else this.visibleMetaCols.push(key);
+            this._updateVisibleColumns();
+        },
+
+        toggleMatrixCol(colId) {
+            if (!this.visibleMatrixCols) {
+                this.visibleMatrixCols = _matrixRaw.columns.map(c => c.id).filter(id => id !== colId);
+            } else {
+                const idx = this.visibleMatrixCols.indexOf(colId);
+                if (idx >= 0) this.visibleMatrixCols.splice(idx, 1);
+                else this.visibleMatrixCols.push(colId);
+                if (_matrixRaw && this.visibleMatrixCols.length === _matrixRaw.columns.length) {
+                    this.visibleMatrixCols = null;
+                }
+            }
+            this._updateVisibleColumns();
+        },
+
+        // Cell value accessors — read from _matrixRaw (no Proxy overhead)
+        cellVal(paperId, colId) {
+            return _matrixRaw?.cells[paperId]?.[colId]?.value || "";
+        },
+
+        cellEvidence(paperId, colId) {
+            return _matrixRaw?.evidence[paperId]?.[colId] || 0;
+        },
+
+        isEditingCell(docId, colId) {
+            return this.editingCell?.docId === docId && this.editingCell?.colId === colId;
+        },
+
+        startEditCell(docId, colId) {
+            this.editingCell = { docId, colId };
+        },
+
+        stopEditCell() {
+            this.editingCell = null;
+        },
+
+        matrixDistinctValues(key) {
+            if (!_matrixRaw) return [];
+            const vals = new Set();
+            for (const p of _matrixRaw.papers) {
+                const v = p[key];
+                if (v != null && v !== "") vals.add(String(v));
+            }
+            return [...vals].sort();
         },
 
         saveMatrixCell(docId, colId, value) {
-            // Update local state immediately
-            if (!this.matrixData.cells[docId]) this.matrixData.cells[docId] = {};
-            this.matrixData.cells[docId][colId] = { value, notes: null };
+            // Update raw state immediately (no Proxy)
+            if (!_matrixRaw.cells[docId]) _matrixRaw.cells[docId] = {};
+            _matrixRaw.cells[docId][colId] = { value, notes: null };
             // Debounce the API call
             const key = `${docId}-${colId}`;
             clearTimeout(_matrixSaveTimers[key]);
@@ -1322,7 +1644,7 @@ document.addEventListener("alpine:init", () => {
         },
 
         toggleMultiValue(colId, optValue, scope = "paper") {
-            const cells = scope === "paper" ? this.paperMatrixCells : (this.matrixData?.cells || {});
+            const cells = scope === "paper" ? this.paperMatrixCells : (_matrixRaw?.cells || {});
             const docId = scope === "paper" ? this.selectedPaperId : null;
 
             let current = [];

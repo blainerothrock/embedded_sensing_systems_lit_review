@@ -49,6 +49,41 @@
                 <svg class="w-4 h-4"><use href="{{icon}}#icon-plus"/></svg>
                 Columns
             </button>
+            <div class="dropdown dropdown-end" x-show="view === 'matrix'">
+                <button tabindex="0" class="btn btn-xs btn-ghost gap-1">
+                    <svg class="w-4 h-4"><use href="{{icon}}#icon-funnel"/></svg>
+                    View
+                </button>
+                <div tabindex="0" class="dropdown-content z-50 bg-base-100 border border-base-300 rounded-box shadow-lg p-3 w-64 max-h-96 overflow-y-auto">
+                    <div class="text-xs font-semibold opacity-60 mb-1">Filter papers</div>
+                    <select class="select select-xs w-full mb-2" x-model="matrixStatusFilter">
+                        <option value="all">All (pass 2 included)</option>
+                        <option value="included">Phase 3 included</option>
+                        <option value="excluded">Phase 3 excluded</option>
+                        <option value="pending">Phase 3 pending</option>
+                    </select>
+                    <div class="text-xs font-semibold opacity-60 mb-1">Metadata columns</div>
+                    <template x-for="mc in metadataColumns" :key="mc.key">
+                        <label class="flex items-center gap-2 cursor-pointer py-0.5">
+                            <input type="checkbox" class="checkbox checkbox-xs"
+                                :checked="visibleMetaCols.includes(mc.key)"
+                                @change="toggleMetaCol(mc.key)">
+                            <span class="text-xs" x-text="mc.label"></span>
+                        </label>
+                    </template>
+                    <div class="divider my-1"></div>
+                    <div class="text-xs font-semibold opacity-60 mb-1">Matrix columns</div>
+                    <template x-for="col in matrixColumns" :key="'vc-'+col.id">
+                        <label class="flex items-center gap-2 cursor-pointer py-0.5">
+                            <input type="checkbox" class="checkbox checkbox-xs"
+                                :checked="!visibleMatrixCols || visibleMatrixCols.includes(col.id)"
+                                @change="toggleMatrixCol(col.id)">
+                            <div class="w-2 h-2 rounded-full flex-shrink-0" :style="'background:' + col.color"></div>
+                            <span class="text-xs" x-text="col.name"></span>
+                        </label>
+                    </template>
+                </div>
+            </div>
             <button class="btn btn-xs gap-1" :class="showChat ? 'btn-secondary' : 'btn-ghost'"
                 @click="toggleChat()" x-show="view === 'papers' && selectedPaper"
                 title="Chat with paper">
@@ -839,73 +874,186 @@
 
     <!-- ==================== MATRIX VIEW ==================== -->
     <div class="h-[calc(100vh-3rem)] overflow-auto p-4" x-show="view === 'matrix'">
-        <template x-if="matrixData">
-            <div class="overflow-x-auto">
-                <table class="table table-xs table-pin-rows table-pin-cols">
-                    <thead>
-                        <tr>
-                            <th class="bg-base-200 z-20">Paper</th>
-                            <th class="bg-base-200">Year</th>
-                            <template x-for="col in matrixData.columns" :key="'h-'+col.id">
-                                <th class="bg-base-200 text-center min-w-28">
-                                    <div class="flex flex-col items-center gap-0.5">
-                                        <div class="w-2 h-2 rounded-full" :style="'background:' + col.color"></div>
-                                        <span x-text="col.name"></span>
-                                        <span class="text-xs opacity-40" x-text="col.column_type.replace('_', ' ')"></span>
-                                    </div>
-                                </th>
-                            </template>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <template x-for="paper in matrixData.papers" :key="paper.id">
-                            <tr class="hover">
-                                <td class="max-w-xs truncate bg-base-200 z-10 cursor-pointer"
-                                    @click="view = 'papers'; selectPaper(paper.id)"
-                                    x-text="paper.title"></td>
-                                <td class="bg-base-200" x-text="paper.year"></td>
-                                <template x-for="col in matrixData.columns" :key="'c-'+col.id+'-'+paper.id">
-                                    <td class="text-center p-1" @click.stop>
+        <template x-if="matrixLoaded">
+            <div>
+                <!-- Status bar -->
+                <div class="flex items-center gap-2 mb-2 text-xs opacity-60">
+                    <span x-text="matrixViewPapers.length + ' / ' + matrixTotalPapers + ' papers'"></span>
+                    <template x-if="hasActiveFilters">
+                        <button class="link link-primary text-xs" @click="clearMatrixFilters()">Clear filters</button>
+                    </template>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="table table-xs table-pin-rows table-pin-cols">
+                        <thead>
+                            <!-- Header row -->
+                            <tr>
+                                <template x-for="(mc, mcIdx) in activeMetaCols" :key="'mh-'+mc.key">
+                                    <th class="bg-base-200 cursor-pointer select-none"
+                                        :class="mc.pinned ? (mcIdx === 0 ? 'z-20 sticky left-0' : 'z-10') : ''"
+                                        @click="toggleMatrixSort(mc.key)">
+                                        <span class="inline-flex items-center gap-1">
+                                            <span x-text="mc.label"></span>
+                                            <span class="text-xs opacity-40"
+                                                x-text="matrixSort.key === mc.key ? (matrixSort.dir === 'asc' ? '▲' : '▼') : ''"></span>
+                                        </span>
+                                    </th>
+                                </template>
+                                <template x-for="col in matrixViewColumns" :key="'h-'+col.id">
+                                    <th class="bg-base-200 text-center min-w-28 cursor-pointer select-none"
+                                        @click="toggleMatrixSort(String(col.id))">
+                                        <div class="flex flex-col items-center gap-0.5">
+                                            <div class="w-2 h-2 rounded-full" :style="'background:' + col.color"></div>
+                                            <span class="inline-flex items-center gap-1">
+                                                <span x-text="col.name"></span>
+                                                <span class="text-xs opacity-40"
+                                                    x-text="matrixSort.key === String(col.id) ? (matrixSort.dir === 'asc' ? '▲' : '▼') : ''"></span>
+                                            </span>
+                                            <span class="text-xs opacity-40" x-text="col.column_type.replace('_', ' ')"></span>
+                                        </div>
+                                    </th>
+                                </template>
+                            </tr>
+                            <!-- Filter row -->
+                            <tr>
+                                <template x-for="(mc, mcIdx) in activeMetaCols" :key="'mf-'+mc.key">
+                                    <th class="bg-base-200 p-0.5"
+                                        :class="mc.pinned ? (mcIdx === 0 ? 'z-20 sticky left-0' : 'z-10') : ''">
+                                        <template x-if="mc.key === 'title' || mc.key === 'author' || mc.key === 'venue'">
+                                            <input type="text" class="input input-xs w-full" placeholder="Filter..."
+                                                :value="matrixColFilters[mc.key] || ''"
+                                                @input="onMatrixFilterInput(mc.key, $event.target.value)">
+                                        </template>
+                                        <template x-if="mc.key === 'year' || mc.key === 'entry_type' || mc.key === 'phase3_decision'">
+                                            <select class="select select-xs w-full"
+                                                :value="matrixColFilters[mc.key] || ''"
+                                                @change="onMatrixFilterChange(mc.key, $event.target.value)">
+                                                <option value="">All</option>
+                                                <template x-for="v in matrixDistinctValues(mc.key)" :key="v">
+                                                    <option :value="v" x-text="v"></option>
+                                                </template>
+                                            </select>
+                                        </template>
+                                    </th>
+                                </template>
+                                <template x-for="col in matrixViewColumns" :key="'f-'+col.id">
+                                    <th class="bg-base-200 p-0.5">
                                         <template x-if="col.column_type === 'enum_single'">
-                                            <select class="select select-xs w-full max-w-28"
-                                                :value="matrixData.cells[paper.id]?.[col.id]?.value || ''"
-                                                @change="saveMatrixCell(paper.id, col.id, $event.target.value)">
-                                                <option value="">—</option>
-                                                <template x-for="opt in col.options" :key="opt.id">
+                                            <select class="select select-xs w-full"
+                                                :value="matrixColFilters[col.id] || ''"
+                                                @change="onMatrixFilterChange(String(col.id), $event.target.value)">
+                                                <option value="">All</option>
+                                                <template x-for="opt in col.options" :key="'fo-'+opt.id">
                                                     <option :value="opt.value" x-text="opt.value"></option>
                                                 </template>
                                             </select>
                                         </template>
                                         <template x-if="col.column_type === 'enum_multi'">
-                                            <div class="text-xs text-left">
-                                                <template x-for="opt in col.options" :key="'mx-'+opt.id">
-                                                    <label class="flex items-center gap-1 cursor-pointer">
-                                                        <input type="checkbox" class="checkbox checkbox-xs"
-                                                            :checked="parseMultiValue(matrixData.cells[paper.id]?.[col.id]?.value).includes(opt.value)"
-                                                            @change="saveMatrixCell(paper.id, col.id, (() => { let v = parseMultiValue(matrixData.cells[paper.id]?.[col.id]?.value); const i = v.indexOf(opt.value); if (i>=0) v.splice(i,1); else v.push(opt.value); return JSON.stringify(v); })())">
-                                                        <span x-text="opt.value"></span>
-                                                    </label>
+                                            <select class="select select-xs w-full"
+                                                :value="matrixColFilters[col.id] || ''"
+                                                @change="onMatrixFilterChange(String(col.id), $event.target.value)">
+                                                <option value="">All</option>
+                                                <template x-for="opt in col.options" :key="'fmo-'+opt.id">
+                                                    <option :value="opt.value" x-text="opt.value"></option>
                                                 </template>
-                                            </div>
+                                            </select>
                                         </template>
                                         <template x-if="col.column_type === 'text'">
-                                            <input type="text" class="input input-xs w-full max-w-28 text-center"
-                                                placeholder="—"
-                                                :value="matrixData.cells[paper.id]?.[col.id]?.value || ''"
-                                                @change="saveMatrixCell(paper.id, col.id, $event.target.value)">
+                                            <input type="text" class="input input-xs w-full" placeholder="Filter..."
+                                                :value="matrixColFilters[col.id] || ''"
+                                                @input="onMatrixFilterInput(String(col.id), $event.target.value)">
                                         </template>
-                                        <span class="badge badge-xs badge-ghost mt-0.5"
-                                            x-show="matrixData.evidence[paper.id]?.[col.id]"
-                                            x-text="(matrixData.evidence[paper.id]?.[col.id] || 0) + ' ann.'"></span>
-                                    </td>
+                                    </th>
                                 </template>
                             </tr>
-                        </template>
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            <template x-for="paper in matrixViewPapers" :key="paper.id">
+                                <tr class="hover" style="content-visibility: auto; contain-intrinsic-height: 2.5rem;">
+                                    <!-- Metadata cells -->
+                                    <template x-for="(mc, mcIdx) in activeMetaCols" :key="'md-'+mc.key+'-'+paper.id">
+                                        <td :class="{
+                                                'bg-base-200 z-10 sticky left-0': mc.pinned && mcIdx === 0,
+                                                'bg-base-200': mc.pinned && mcIdx > 0,
+                                                'cursor-pointer': mc.key === 'title',
+                                                'min-w-48 max-w-sm': mc.key === 'title',
+                                                'max-w-xs': mc.key === 'author' || mc.key === 'venue',
+                                            }"
+                                            @click="mc.key === 'title' && (view = 'papers', selectPaper(paper.id))">
+                                            <template x-if="mc.key === 'phase3_decision'">
+                                                <span class="badge badge-xs"
+                                                    :class="paper.phase3_decision === 'include' ? 'badge-success' : paper.phase3_decision === 'exclude' ? 'badge-error' : 'badge-ghost'"
+                                                    x-text="paper.phase3_decision || 'pending'"></span>
+                                            </template>
+                                            <template x-if="mc.key !== 'phase3_decision'">
+                                                <span x-text="paper[mc.key] || '—'" class="text-xs"></span>
+                                            </template>
+                                        </td>
+                                    </template>
+                                    <!-- Matrix column cells -->
+                                    <template x-for="col in matrixViewColumns" :key="'c-'+col.id+'-'+paper.id">
+                                        <td class="text-center p-1" @click.stop>
+                                            <!-- enum_single: click-to-edit -->
+                                            <template x-if="col.column_type === 'enum_single'">
+                                                <div>
+                                                    <select x-show="isEditingCell(paper.id, col.id)"
+                                                        class="select select-xs w-full max-w-28"
+                                                        :value="cellVal(paper.id, col.id)"
+                                                        @change="saveMatrixCell(paper.id, col.id, $event.target.value); stopEditCell()"
+                                                        @blur="stopEditCell()">
+                                                        <option value="">—</option>
+                                                        <template x-for="opt in col.options" :key="opt.id">
+                                                            <option :value="opt.value" x-text="opt.value"></option>
+                                                        </template>
+                                                    </select>
+                                                    <span x-show="!isEditingCell(paper.id, col.id)"
+                                                        class="cursor-pointer text-xs px-1 py-0.5 rounded hover:bg-base-300 inline-block min-w-8"
+                                                        @click="startEditCell(paper.id, col.id); $nextTick(() => { const sel = $el.previousElementSibling; if (sel) sel.focus(); })"
+                                                        x-text="cellVal(paper.id, col.id) || '—'"></span>
+                                                </div>
+                                            </template>
+                                            <!-- enum_multi: always show checkboxes -->
+                                            <template x-if="col.column_type === 'enum_multi'">
+                                                <div class="text-xs text-left">
+                                                    <template x-for="opt in col.options" :key="'mx-'+opt.id">
+                                                        <label class="flex items-center gap-1 cursor-pointer">
+                                                            <input type="checkbox" class="checkbox checkbox-xs"
+                                                                :checked="parseMultiValue(cellVal(paper.id, col.id)).includes(opt.value)"
+                                                                @change="saveMatrixCell(paper.id, col.id, (() => { let v = parseMultiValue(cellVal(paper.id, col.id)); const i = v.indexOf(opt.value); if (i>=0) v.splice(i,1); else v.push(opt.value); return JSON.stringify(v); })())">
+                                                            <span x-text="opt.value"></span>
+                                                        </label>
+                                                    </template>
+                                                </div>
+                                            </template>
+                                            <!-- text: click-to-edit -->
+                                            <template x-if="col.column_type === 'text'">
+                                                <div>
+                                                    <input x-show="isEditingCell(paper.id, col.id)"
+                                                        type="text" class="input input-xs w-full max-w-28 text-center"
+                                                        placeholder="—"
+                                                        :value="cellVal(paper.id, col.id)"
+                                                        @change="saveMatrixCell(paper.id, col.id, $event.target.value)"
+                                                        @blur="stopEditCell()"
+                                                        @keydown.enter="$event.target.blur()">
+                                                    <span x-show="!isEditingCell(paper.id, col.id)"
+                                                        class="cursor-pointer text-xs px-1 py-0.5 rounded hover:bg-base-300 inline-block min-w-8"
+                                                        @click="startEditCell(paper.id, col.id); $nextTick(() => { const inp = $el.previousElementSibling; if (inp) inp.focus(); })"
+                                                        x-text="cellVal(paper.id, col.id) || '—'"></span>
+                                                </div>
+                                            </template>
+                                            <span class="badge badge-xs badge-ghost mt-0.5"
+                                                x-show="cellEvidence(paper.id, col.id)"
+                                                x-text="cellEvidence(paper.id, col.id) + ' ann.'"></span>
+                                        </td>
+                                    </template>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </template>
-        <div x-show="!matrixData" class="text-center py-12 opacity-50">Loading matrix...</div>
+        <div x-show="!matrixLoaded" class="text-center py-12 opacity-50">Loading matrix...</div>
     </div>
 
     <!-- ==================== THEMES VIEW ==================== -->

@@ -252,6 +252,15 @@ def _create_matrix_column_tables(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_matrix_cell_v2_document ON matrix_cell(document_id)"
     )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_matrix_cell_doc_col ON matrix_cell(document_id, column_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_annotation_code_code_id ON annotation_code(code_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_code_parent ON code(parent_id)"
+    )
 
 
 def _create_chat_tables(conn: sqlite3.Connection) -> None:

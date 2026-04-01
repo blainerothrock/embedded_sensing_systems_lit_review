@@ -323,8 +323,9 @@ def api_unlink_column_code(col_id, code_id):
 
 @app.route("/api/matrix")
 def api_matrix():
+    status = request.args.get("status", "all")
     with db.connect() as conn:
-        matrix = db.get_matrix(conn)
+        matrix = db.get_matrix(conn, status=status)
     return jsonify(matrix)
 
 

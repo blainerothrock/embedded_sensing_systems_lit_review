@@ -419,24 +419,44 @@ def get_code_usage_counts(conn: sqlite3.Connection) -> dict[int, int]:
 
 
 def get_matrix_columns(conn: sqlite3.Connection) -> list[dict]:
-    """Get all matrix columns with options and linked codes."""
+    """Get all matrix columns with options and linked codes (batched queries)."""
     cols = conn.execute(
         "SELECT * FROM matrix_column ORDER BY sort_order, id"
     ).fetchall()
+    if not cols:
+        return []
+
+    col_ids = [c["id"] for c in cols]
+    placeholders = ",".join("?" * len(col_ids))
+
+    # Batch: all options in one query
+    options = conn.execute(
+        f"SELECT * FROM matrix_column_option WHERE column_id IN ({placeholders}) ORDER BY sort_order, id",
+        col_ids,
+    ).fetchall()
+    opts_by_col: dict[int, list[dict]] = {}
+    for o in options:
+        opts_by_col.setdefault(o["column_id"], []).append(dict(o))
+
+    # Batch: all linked codes in one query
+    linked = conn.execute(f"""
+        SELECT mcc.column_id, c.id, c.name, c.color, c.parent_id
+        FROM matrix_column_code mcc
+        JOIN code c ON c.id = mcc.code_id
+        WHERE mcc.column_id IN ({placeholders})
+        ORDER BY c.name
+    """, col_ids).fetchall()
+    links_by_col: dict[int, list[dict]] = {}
+    for lc in linked:
+        links_by_col.setdefault(lc["column_id"], []).append(
+            {"id": lc["id"], "name": lc["name"], "color": lc["color"], "parent_id": lc["parent_id"]}
+        )
+
     result = []
     for col in cols:
         c = dict(col)
-        c["options"] = [dict(r) for r in conn.execute(
-            "SELECT * FROM matrix_column_option WHERE column_id = ? ORDER BY sort_order, id",
-            (c["id"],)
-        ).fetchall()]
-        c["linked_codes"] = [dict(r) for r in conn.execute("""
-            SELECT c.id, c.name, c.color, c.parent_id
-            FROM matrix_column_code mcc
-            JOIN code c ON c.id = mcc.code_id
-            WHERE mcc.column_id = ?
-            ORDER BY c.name
-        """, (c["id"],)).fetchall()]
+        c["options"] = opts_by_col.get(c["id"], [])
+        c["linked_codes"] = links_by_col.get(c["id"], [])
         result.append(c)
     return result
 
@@ -517,49 +537,72 @@ def unlink_column_code(conn: sqlite3.Connection, column_id: int, code_id: int) -
 # --- Matrix Data ---
 
 
-def get_matrix(conn: sqlite3.Connection) -> dict:
+def get_matrix(conn: sqlite3.Connection, status: str = "all") -> dict:
     """Get the coding matrix: papers × matrix columns with cell values and evidence."""
     columns = get_matrix_columns(conn)
 
-    papers = conn.execute(
-        _paper_select() + """
+    # Papers query with optional phase 3 status filter
+    query = _paper_select() + """
         INNER JOIN pass_review pr2 ON pr2.document_id = d.id
             AND pr2.pass_number = 2 AND pr2.decision = 'include'
-        ORDER BY d.title
-    """).fetchall()
+    """
+    params: list = []
+    if status == "included":
+        query += " AND pr3.decision = 'include'"
+    elif status == "excluded":
+        query += " AND pr3.decision = 'exclude'"
+    elif status == "pending":
+        query += " AND pr3.decision IS NULL"
+    query += " ORDER BY d.title"
+    papers = conn.execute(query, params).fetchall()
 
     # Get matrix cell values
     cells = conn.execute("SELECT * FROM matrix_cell").fetchall()
-    cell_map = {}  # {doc_id: {column_id: {value, notes}}}
+    cell_map: dict = {}  # {doc_id: {column_id: {value, notes}}}
     for c in cells:
         cell_map.setdefault(c["document_id"], {})[c["column_id"]] = {
             "value": c["value"],
             "notes": c["notes"],
         }
 
-    # Get annotation evidence counts per paper × column (via linked codes)
-    evidence_map = {}  # {doc_id: {column_id: count}}
+    # Batch evidence counting: collect all linked code IDs across all columns
+    evidence_map: dict = {}  # {doc_id: {column_id: count}}
+    code_to_cols: dict[int, set[int]] = {}  # code_id -> set of column_ids
     for col in columns:
-        linked_code_ids = [lc["id"] for lc in col["linked_codes"]]
-        if not linked_code_ids:
-            continue
-        # Also include sub-codes of linked codes
-        all_code_ids = list(linked_code_ids)
-        for code_id in linked_code_ids:
-            subs = conn.execute(
-                "SELECT id FROM code WHERE parent_id = ?", (code_id,)
-            ).fetchall()
-            all_code_ids.extend(r["id"] for r in subs)
+        for lc in col["linked_codes"]:
+            code_to_cols.setdefault(lc["id"], set()).add(col["id"])
+
+    if code_to_cols:
+        # Batch: get all sub-codes of linked codes in one query
+        parent_ids = list(code_to_cols.keys())
+        placeholders = ",".join("?" * len(parent_ids))
+        subs = conn.execute(
+            f"SELECT id, parent_id FROM code WHERE parent_id IN ({placeholders})",
+            parent_ids,
+        ).fetchall()
+        for s in subs:
+            # Sub-codes map to the same columns as their parent
+            for col_id in code_to_cols.get(s["parent_id"], set()):
+                code_to_cols.setdefault(s["id"], set()).add(col_id)
+
+        # Batch: count all evidence in one query, grouped by (document_id, code_id)
+        all_code_ids = list(code_to_cols.keys())
         placeholders = ",".join("?" * len(all_code_ids))
         rows = conn.execute(f"""
-            SELECT ann.document_id, COUNT(DISTINCT ann.id) as n
+            SELECT ann.document_id, ac.code_id, ann.id as ann_id
             FROM annotation ann
             JOIN annotation_code ac ON ac.annotation_id = ann.id
             WHERE ac.code_id IN ({placeholders})
-            GROUP BY ann.document_id
         """, all_code_ids).fetchall()
+
+        # Use sets to avoid double-counting annotations mapped to multiple codes on same column
+        evidence_sets: dict[tuple[int, int], set[int]] = {}  # (doc_id, col_id) -> set of ann_ids
         for r in rows:
-            evidence_map.setdefault(r["document_id"], {})[col["id"]] = r["n"]
+            for col_id in code_to_cols.get(r["code_id"], set()):
+                evidence_sets.setdefault((r["document_id"], col_id), set()).add(r["ann_id"])
+
+        for (doc_id, col_id), ann_ids in evidence_sets.items():
+            evidence_map.setdefault(doc_id, {})[col_id] = len(ann_ids)
 
     return {
         "columns": columns,
