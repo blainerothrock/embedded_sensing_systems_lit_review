@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from flask import Flask, Response, jsonify, render_template, request, send_file
+from flask import Flask, Response, jsonify, render_template, request, send_file, send_from_directory
 
 import db
 import schema
@@ -40,9 +40,17 @@ def init_db():
 
 # --- Page ---
 
+DIST_DIR = Path(__file__).parent / "static" / "dist"
+
+
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return send_from_directory(DIST_DIR, "index.html")
+
+
+@app.route("/assets/<path:filename>")
+def serve_assets(filename):
+    return send_from_directory(DIST_DIR / "assets", filename)
 
 
 # --- API: Papers ---
@@ -599,6 +607,23 @@ def api_chat(doc_id):
     return Response(generate(), mimetype="text/event-stream")
 
 
+# --- API: Paper Notes ---
+
+@app.route("/api/papers/<int:doc_id>/notes")
+def api_get_paper_note(doc_id):
+    with db.connect() as conn:
+        content = db.get_paper_note(conn, doc_id)
+    return jsonify({"content": content})
+
+
+@app.route("/api/papers/<int:doc_id>/notes", methods=["PUT"])
+def api_save_paper_note(doc_id):
+    data = request.get_json()
+    with db.connect() as conn:
+        db.save_paper_note(conn, doc_id, data.get("content", ""))
+    return jsonify({"success": True})
+
+
 # --- API: Stats ---
 
 @app.route("/api/stats")
@@ -615,6 +640,7 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5001)
     parser.add_argument("--desktop", action="store_true", help="Launch as desktop app (pywebview)")
+    parser.add_argument("--dev-url", default=None, help="Vite dev server URL for desktop mode (e.g. http://localhost:5173)")
     args = parser.parse_args()
 
     init_db()
@@ -628,9 +654,10 @@ def main():
             daemon=True,
         )
         server.start()
+        url = args.dev_url or f"http://127.0.0.1:{args.port}"
         webview.create_window(
             "Lit Review Coding",
-            f"http://127.0.0.1:{args.port}",
+            url,
             width=1400,
             height=900,
         )
