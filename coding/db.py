@@ -482,6 +482,15 @@ def save_matrix_cell(
     return dict(row)
 
 
+def get_paper_matrix_cells(conn: sqlite3.Connection, document_id: int) -> dict[int, dict]:
+    """Get matrix cells for a single paper: {code_id: {value, notes}}."""
+    rows = conn.execute(
+        "SELECT code_id, value, notes FROM matrix_cell WHERE document_id = ?",
+        (document_id,)
+    ).fetchall()
+    return {row["code_id"]: {"value": row["value"], "notes": row["notes"]} for row in rows}
+
+
 # --- Coding Completeness ---
 
 

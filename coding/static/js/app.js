@@ -4,6 +4,10 @@ let pdfjsLib = null;
 let _pdfDoc = null;
 // Store per-page viewports for coordinate conversion (page_number → viewport)
 let _pageViewports = {};
+// Debounce timer for CTRL+scroll zoom re-render
+let _zoomRenderTimer = null;
+// Snapshot of scroll anchor before zoom sequence begins (reset after render)
+let _zoomAnchor = null;
 
 async function ensurePdfJs() {
     if (pdfjsLib) return pdfjsLib;
@@ -62,11 +66,12 @@ document.addEventListener("alpine:init", () => {
         newCodeName: "",
         newSubCodeNames: {},    // {parent_code_id: "name"}
         matrixData: null,
+        paperMatrixCells: {},  // {code_id: {value, notes}} for selected paper
 
         // Annotation state
         selectedAnnotation: null,    // annotation detail view
+        annotationReturnTab: null,   // tab to return to from annotation detail
         showAnnotationToolbar: false,
-        annotationToolbarPos: { x: 0, y: 0 },
         pendingSelection: null,      // {text, rects, pageNumber}
         selectedAnnotationCodes: [], // code IDs to tag new annotation with
         pdfMode: "text",             // "hand" | "text" | "box"
@@ -110,6 +115,18 @@ document.addEventListener("alpine:init", () => {
                 if (e.key === "ArrowLeft" || e.key === "j" || e.key === "J") { this.prevPaper(); e.preventDefault(); }
                 if (e.key === "ArrowRight" || e.key === "k" || e.key === "K") { this.nextPaper(); e.preventDefault(); }
             });
+            // Block browser zoom on CTRL+scroll over the whole page,
+            // but only do our custom zoom when over the PDF container.
+            document.addEventListener("wheel", (e) => {
+                if (e.ctrlKey || e.metaKey) {
+                    e.preventDefault();
+                    // Only zoom if the event is inside the PDF container
+                    const container = this.$refs.pdfContainer;
+                    if (container && container.contains(e.target)) {
+                        this.onPdfWheel(e);
+                    }
+                }
+            }, { passive: false });
             await Promise.all([
                 this.loadPapers(),
                 this.loadExclusionCodes(),
@@ -132,17 +149,17 @@ document.addEventListener("alpine:init", () => {
             const params = new URLSearchParams();
             if (this.searchQuery) params.set("search", this.searchQuery);
             if (this.statusFilter !== "all") params.set("status", this.statusFilter);
-            const res = await fetch(`/api/papers?${params}`);
+            const res = await fetch(`api/papers?${params}`);
             this.papers = await res.json();
         },
 
         async loadExclusionCodes() {
-            const res = await fetch("/api/exclusion-codes");
+            const res = await fetch("api/exclusion-codes");
             this.exclusionCodes = await res.json();
         },
 
         async loadStats() {
-            const res = await fetch("/api/stats");
+            const res = await fetch("api/stats");
             this.stats = await res.json();
         },
 
@@ -150,7 +167,7 @@ document.addEventListener("alpine:init", () => {
 
         async selectPaper(id) {
             this.selectedPaperId = id;
-            const res = await fetch(`/api/papers/${id}`);
+            const res = await fetch(`api/papers/${id}`);
             this.selectedPaper = await res.json();
 
             // Populate review form
@@ -169,8 +186,11 @@ document.addEventListener("alpine:init", () => {
                 this.clearPdf();
             }
 
-            // Load annotations for this paper
-            await this.loadPaperAnnotations();
+            // Load annotations and matrix cells for this paper
+            await Promise.all([
+                this.loadPaperAnnotations(),
+                this.loadPaperMatrixCells(),
+            ]);
         },
 
         // --- PDF ---
@@ -193,7 +213,7 @@ document.addEventListener("alpine:init", () => {
 
             try {
                 const pdfjs = await ensurePdfJs();
-                const loadingTask = pdfjs.getDocument(`/api/papers/${docId}/pdf`);
+                const loadingTask = pdfjs.getDocument(`api/papers/${docId}/pdf`);
                 _pdfDoc = await loadingTask.promise;
                 this.pdfPageCount = _pdfDoc.numPages;
 
@@ -216,6 +236,7 @@ document.addEventListener("alpine:init", () => {
         async renderAllPages() {
             if (!_pdfDoc || this.pdfRendering) return;
             this.pdfRendering = true;
+
             const container = this.$refs.pdfPages;
             container.innerHTML = "";
             _pageViewports = {};
@@ -370,7 +391,42 @@ document.addEventListener("alpine:init", () => {
         },
 
         onPdfWheel(event) {
-            // Reserved for future use
+            const container = this.$refs.pdfContainer;
+            if (!container || !_pdfDoc) return;
+
+            const delta = event.deltaY > 0 ? -0.1 : 0.1;
+            const oldScale = this.pdfScale;
+            const newScale = Math.min(Math.max(oldScale + delta, 0.5), 4.0);
+            if (newScale === oldScale) return;
+
+            // On first tick of a zoom gesture, capture the anchor point
+            // in PDF-content space (independent of scale)
+            if (!_zoomAnchor) {
+                const rect = container.getBoundingClientRect();
+                const cursorX = event.clientX - rect.left;
+                const cursorY = event.clientY - rect.top;
+                _zoomAnchor = {
+                    // Content-space point = scroll + cursor, normalized by scale
+                    contentX: (container.scrollLeft + cursorX) / oldScale,
+                    contentY: (container.scrollTop + cursorY) / oldScale,
+                    cursorX,
+                    cursorY,
+                };
+            }
+
+            this.pdfScale = newScale;
+
+            // Debounce re-render
+            clearTimeout(_zoomRenderTimer);
+            _zoomRenderTimer = setTimeout(async () => {
+                const anchor = _zoomAnchor;
+                _zoomAnchor = null;
+                await this.renderAllPages();
+                if (anchor) {
+                    container.scrollLeft = anchor.contentX * this.pdfScale - anchor.cursorX;
+                    container.scrollTop = anchor.contentY * this.pdfScale - anchor.cursorY;
+                }
+            }, 100);
         },
 
         onTextSelection(event) {
@@ -420,14 +476,8 @@ document.addEventListener("alpine:init", () => {
             this.pendingSelection = { text, rects: pdfRects, pageNumber };
             this.selectedAnnotationCodes = [];
 
-            // Position toolbar near the selection
-            const lastRect = clientRects[clientRects.length - 1];
-            const containerBounds = this.$refs.pdfContainer.getBoundingClientRect();
-            this.annotationToolbarPos = {
-                x: lastRect.left - containerBounds.left + this.$refs.pdfContainer.scrollLeft,
-                y: lastRect.bottom - containerBounds.top + this.$refs.pdfContainer.scrollTop + 4,
-            };
             this.showAnnotationToolbar = true;
+            this.$nextTick(() => this.$refs.annotationToolbarSearchInput?.focus({ preventScroll: true }));
         },
 
         toggleAnnotationCode(codeId) {
@@ -459,7 +509,7 @@ document.addEventListener("alpine:init", () => {
             const annType = text ? "highlight" : "area";
 
             const codeIds = [...this.selectedAnnotationCodes];
-            const res = await fetch(`/api/papers/${this.selectedPaperId}/annotations`, {
+            const res = await fetch(`api/papers/${this.selectedPaperId}/annotations`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -532,11 +582,13 @@ document.addEventListener("alpine:init", () => {
 
         async pdfZoomIn() {
             this.pdfScale = Math.min(this.pdfScale + 0.25, 4.0);
+
             await this.renderAllPages();
         },
 
         async pdfZoomOut() {
             this.pdfScale = Math.max(this.pdfScale - 0.25, 0.5);
+
             await this.renderAllPages();
         },
 
@@ -547,6 +599,7 @@ document.addEventListener("alpine:init", () => {
             const containerWidth = container.clientWidth - 40; // padding
             const viewport = page.getViewport({ scale: 1.0 });
             this.pdfScale = containerWidth / viewport.width;
+
             await this.renderAllPages();
         },
 
@@ -573,7 +626,7 @@ document.addEventListener("alpine:init", () => {
 
             try {
                 const res = await fetch(
-                    `/api/papers/${this.selectedPaperId}/upload-pdf`,
+                    `api/papers/${this.selectedPaperId}/upload-pdf`,
                     { method: "POST", body: formData }
                 );
                 const data = await res.json();
@@ -615,7 +668,7 @@ document.addEventListener("alpine:init", () => {
 
             try {
                 const res = await fetch(
-                    `/api/papers/${this.selectedPaperId}/review`,
+                    `api/papers/${this.selectedPaperId}/review`,
                     {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -714,13 +767,13 @@ document.addEventListener("alpine:init", () => {
         },
 
         async loadCodes() {
-            const res = await fetch("/api/codes");
+            const res = await fetch("api/codes");
             this.codes = await res.json();
         },
 
         async createTopCode() {
             if (!this.newCodeName.trim()) return;
-            const res = await fetch("/api/codes", {
+            const res = await fetch("api/codes", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ name: this.newCodeName.trim() }),
@@ -738,7 +791,7 @@ document.addEventListener("alpine:init", () => {
         async createSubCode(parentId) {
             const name = this.newSubCodeNames[parentId]?.trim();
             if (!name) return;
-            const res = await fetch("/api/codes", {
+            const res = await fetch("api/codes", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ name, parent_id: parentId }),
@@ -753,7 +806,7 @@ document.addEventListener("alpine:init", () => {
         },
 
         async updateCode(codeId, updates) {
-            await fetch(`/api/codes/${codeId}`, {
+            await fetch(`api/codes/${codeId}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(updates),
@@ -762,7 +815,7 @@ document.addEventListener("alpine:init", () => {
         },
 
         async deleteCode(codeId) {
-            const res = await fetch(`/api/codes/${codeId}`, { method: "DELETE" });
+            const res = await fetch(`api/codes/${codeId}`, { method: "DELETE" });
             if (res.ok) {
                 await this.loadCodes();
                 await this.loadCodeUsageCounts();
@@ -773,7 +826,7 @@ document.addEventListener("alpine:init", () => {
         },
 
         async loadCodeUsageCounts() {
-            const res = await fetch("/api/codes/usage");
+            const res = await fetch("api/codes/usage");
             this.codeUsageCounts = await res.json();
         },
 
@@ -810,7 +863,7 @@ document.addEventListener("alpine:init", () => {
 
         async loadPaperAnnotations() {
             if (!this.selectedPaperId) return;
-            const res = await fetch(`/api/papers/${this.selectedPaperId}/annotations`);
+            const res = await fetch(`api/papers/${this.selectedPaperId}/annotations`);
             this.paperAnnotations = await res.json();
             // Re-render overlays if PDF is loaded
             if (Object.keys(_pageViewports).length > 0) {
@@ -819,12 +872,12 @@ document.addEventListener("alpine:init", () => {
         },
 
         async deleteAnnotation(annId) {
-            await fetch(`/api/annotations/${annId}`, { method: "DELETE" });
+            await fetch(`api/annotations/${annId}`, { method: "DELETE" });
             await this.loadPaperAnnotations();
         },
 
         codeMatchesSearch(topCode) {
-            const q = this.codePickerSearch.toLowerCase();
+            const q = (this.codePickerSearch || this.annotationToolbarSearch).toLowerCase();
             if (!q) return true;
             if (topCode.name.toLowerCase().includes(q)) return true;
             if (topCode.description?.toLowerCase().includes(q)) return true;
@@ -832,7 +885,7 @@ document.addEventListener("alpine:init", () => {
         },
 
         subCodeMatchesSearch(sub, topCode) {
-            const q = this.codePickerSearch.toLowerCase();
+            const q = (this.codePickerSearch || this.annotationToolbarSearch).toLowerCase();
             if (!q) return true;
             return sub.name.toLowerCase().includes(q) || topCode.name.toLowerCase().includes(q);
         },
@@ -845,7 +898,7 @@ document.addEventListener("alpine:init", () => {
         },
 
         async addAnnotationCode(annId, codeId) {
-            await fetch(`/api/annotations/${annId}/codes/${codeId}`, { method: "POST" });
+            await fetch(`api/annotations/${annId}/codes/${codeId}`, { method: "POST" });
             await this.loadPaperAnnotations();
             await this.loadCodeUsageCounts();
             if (this.selectedAnnotation?.id === annId) {
@@ -854,7 +907,7 @@ document.addEventListener("alpine:init", () => {
         },
 
         async removeAnnotationCode(annId, codeId) {
-            await fetch(`/api/annotations/${annId}/codes/${codeId}`, { method: "DELETE" });
+            await fetch(`api/annotations/${annId}/codes/${codeId}`, { method: "DELETE" });
             await this.loadPaperAnnotations();
             await this.loadCodeUsageCounts();
             if (this.selectedAnnotation?.id === annId) {
@@ -863,7 +916,7 @@ document.addEventListener("alpine:init", () => {
         },
 
         async saveAnnotationCodeNote(annId, codeId, note) {
-            await fetch(`/api/annotations/${annId}/codes/${codeId}/note`, {
+            await fetch(`api/annotations/${annId}/codes/${codeId}/note`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ note }),
@@ -936,7 +989,7 @@ document.addEventListener("alpine:init", () => {
         },
 
         async saveAnnotationNote(annId, note) {
-            await fetch(`/api/annotations/${annId}`, {
+            await fetch(`api/annotations/${annId}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ note }),
@@ -971,7 +1024,7 @@ document.addEventListener("alpine:init", () => {
                 ? ann.selected_text + " ... " + (newText || "")
                 : newText || ann.selected_text;
 
-            await fetch(`/api/annotations/${annId}`, {
+            await fetch(`api/annotations/${annId}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -1044,11 +1097,8 @@ document.addEventListener("alpine:init", () => {
                 } else {
                     this.pendingSelection = { text: null, rects: pdfRects, pageNumber };
                     this.selectedAnnotationCodes = [];
-                    this.annotationToolbarPos = {
-                        x: e.clientX - this.$refs.pdfContainer.getBoundingClientRect().left + this.$refs.pdfContainer.scrollLeft,
-                        y: e.clientY - this.$refs.pdfContainer.getBoundingClientRect().top + this.$refs.pdfContainer.scrollTop + 4,
-                    };
                     this.showAnnotationToolbar = true;
+                    this.$nextTick(() => this.$refs.annotationToolbarSearchInput?.focus({ preventScroll: true }));
                 }
                 this.setPdfMode("text");
             };
@@ -1061,17 +1111,17 @@ document.addEventListener("alpine:init", () => {
         // --- Matrix ---
 
         async loadCodingCompleteness() {
-            const res = await fetch("/api/coding/completeness");
+            const res = await fetch("api/coding/completeness");
             this.codingCompleteness = await res.json();
         },
 
         async loadMatrix() {
-            const res = await fetch("/api/matrix");
+            const res = await fetch("api/matrix");
             this.matrixData = await res.json();
         },
 
         async saveMatrixCell(docId, codeId, value) {
-            await fetch("/api/matrix/cell", {
+            await fetch("api/matrix/cell", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ document_id: docId, code_id: codeId, value }),
@@ -1079,6 +1129,29 @@ document.addEventListener("alpine:init", () => {
             // Update local state
             if (!this.matrixData.cells[docId]) this.matrixData.cells[docId] = {};
             this.matrixData.cells[docId][codeId] = { value, notes: null };
+        },
+
+        async loadPaperMatrixCells() {
+            if (!this.selectedPaperId) return;
+            const res = await fetch(`api/papers/${this.selectedPaperId}/matrix-cells`);
+            this.paperMatrixCells = await res.json();
+        },
+
+        async savePaperMatrixCell(codeId, value) {
+            await fetch("api/matrix/cell", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ document_id: this.selectedPaperId, code_id: codeId, value }),
+            });
+            if (!this.paperMatrixCells[codeId]) this.paperMatrixCells[codeId] = {};
+            this.paperMatrixCells[codeId].value = value;
+        },
+
+        getEvidenceForCode(code) {
+            const codeIds = new Set([code.id, ...(code.children || []).map(c => c.id)]);
+            return this.paperAnnotations.filter(ann =>
+                ann.codes.some(c => codeIds.has(c.id))
+            );
         },
 
         // --- Toast ---

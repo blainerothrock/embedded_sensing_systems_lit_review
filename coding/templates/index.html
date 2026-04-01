@@ -121,64 +121,66 @@
         <div class="resize-handle" @mousedown="startResize('left', $event)"></div>
 
         <!-- Center: PDF Viewer -->
-        <div class="flex-1 flex flex-col bg-base-300 relative"
+        <div class="flex-1 min-w-0 flex flex-col bg-base-300 relative overflow-hidden"
              @dragover.prevent="dragOver = true"
              @dragleave.prevent="dragOver = false"
              @drop.prevent="handleDrop($event)">
 
-            <div x-ref="pdfContainer" class="flex-1 overflow-auto flex justify-center relative"
+            <div x-ref="pdfContainer" class="flex-1 overflow-auto relative"
                  :class="{'cursor-grab': pdfMode === 'hand' && !_panning, 'cursor-grabbing': _panning}"
                  @scroll="onPdfScroll()" @mouseup="onTextSelection($event)"
                  @mousedown="onPdfMouseDown($event)"
                  @dblclick="pdfFitWidth()"
-                 @wheel="onPdfWheel($event)">
+>
                 <div x-ref="pdfPages" class="py-4 pb-16"></div>
 
-                <!-- Floating annotation toolbar with hierarchical code picker -->
-                <div class="annotation-toolbar" x-show="showAnnotationToolbar" x-transition
-                     :style="'left:' + annotationToolbarPos.x + 'px;top:' + annotationToolbarPos.y + 'px'"
->
-                    <div class="card bg-base-100 shadow-xl border border-base-300 p-2 w-72 max-h-80 overflow-hidden">
-                        <p class="text-xs font-semibold mb-1.5 opacity-70">Tag with codes:</p>
-                        <!-- Search -->
-                        <input type="text" class="input input-xs w-full mb-1"
-                            placeholder="Search codes..."
-                            x-model="annotationToolbarSearch"
-                            @keydown.escape.stop="cancelAnnotation()">
-                        <!-- Hierarchical code list -->
-                        <div class="max-h-44 overflow-y-auto overflow-x-hidden space-y-0.5 mb-2">
-                            <template x-for="topCode in codes" :key="'at-'+topCode.id">
-                                <div x-show="codeMatchesSearch(topCode) || annotationToolbarSearch === ''">
-                                    <button class="flex items-center gap-2 w-full text-left px-1 pr-1 py-1.5 text-xs rounded hover:bg-base-200 font-semibold"
-                                        @click="toggleAnnotationCode(topCode.id)">
-                                        <div class="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                                            :style="'background:' + topCode.color"></div>
-                                        <span class="flex-1" x-text="topCode.name"></span>
-                                        <svg x-show="selectedAnnotationCodes.includes(topCode.id)" class="w-3.5 h-3.5 text-success flex-shrink-0"><use href="{{icon}}#icon-check"/></svg>
+
+            </div>
+
+            <!-- Centered annotation code picker modal (outside scroll container) -->
+            <div x-show="showAnnotationToolbar" x-transition
+                 class="absolute inset-0 flex items-center justify-center z-50 pointer-events-none"
+            >
+                <div class="card bg-base-100 shadow-2xl border border-base-300 p-3 w-96 max-h-[28rem] overflow-hidden pointer-events-auto">
+                    <p class="text-sm font-semibold mb-2 opacity-70">Tag with codes:</p>
+                    <!-- Search -->
+                    <input type="text" class="input input-sm w-full mb-2"
+                        placeholder="Search codes..."
+                        x-model="annotationToolbarSearch"
+                        x-ref="annotationToolbarSearchInput"
+                        @keydown.escape.stop="cancelAnnotation()">
+                    <!-- Hierarchical code list -->
+                    <div class="max-h-64 overflow-y-auto overflow-x-hidden space-y-0.5 mb-2">
+                        <template x-for="topCode in codes" :key="'at-'+topCode.id">
+                            <div x-show="codeMatchesSearch(topCode)">
+                                <button class="flex items-center gap-2 w-full text-left px-1 pr-1 py-1.5 text-xs rounded hover:bg-base-200 font-semibold"
+                                    @click="toggleAnnotationCode(topCode.id)">
+                                    <div class="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                        :style="'background:' + topCode.color"></div>
+                                    <span class="flex-1" x-text="topCode.name"></span>
+                                    <svg x-show="selectedAnnotationCodes.includes(topCode.id)" class="w-3.5 h-3.5 text-success flex-shrink-0"><use href="{{icon}}#icon-check"/></svg>
+                                </button>
+                                <template x-for="sub in topCode.children" :key="'at-sub-'+sub.id">
+                                    <button x-show="subCodeMatchesSearch(sub, topCode)"
+                                        class="flex items-center gap-2 w-full text-left pl-5 pr-1 py-1 text-xs rounded hover:bg-base-200"
+                                        @click="toggleAnnotationCode(sub.id)">
+                                        <div class="w-2 h-2 rounded-full flex-shrink-0"
+                                            :style="'background:' + sub.color"></div>
+                                        <span class="flex-1" x-text="sub.name"></span>
+                                        <svg x-show="selectedAnnotationCodes.includes(sub.id)" class="w-3.5 h-3.5 text-success flex-shrink-0"><use href="{{icon}}#icon-check"/></svg>
                                     </button>
-                                    <template x-for="sub in topCode.children" :key="'at-sub-'+sub.id">
-                                        <button x-show="subCodeMatchesSearch(sub, topCode) || annotationToolbarSearch === ''"
-                                            class="flex items-center gap-2 w-full text-left pl-5 pr-1 py-1 text-xs rounded hover:bg-base-200"
-                                            @click="toggleAnnotationCode(sub.id)">
-                                            <div class="w-2 h-2 rounded-full flex-shrink-0"
-                                                :style="'background:' + sub.color"></div>
-                                            <span class="flex-1" x-text="sub.name"></span>
-                                            <svg x-show="selectedAnnotationCodes.includes(sub.id)" class="w-3.5 h-3.5 text-success flex-shrink-0"><use href="{{icon}}#icon-check"/></svg>
-                                        </button>
-                                    </template>
-                                </div>
-                            </template>
-                        </div>
-                        <div class="flex gap-1">
-                            <button class="btn btn-xs btn-primary flex-1" @click="confirmAnnotation()">
-                                <svg class="w-3 h-3"><use href="{{icon}}#icon-check"/></svg>
-                                Save
-                            </button>
-                            <button class="btn btn-xs btn-ghost" @click="cancelAnnotation()">Cancel</button>
-                        </div>
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+                    <div class="flex gap-1">
+                        <button class="btn btn-xs btn-primary flex-1" @click="confirmAnnotation()">
+                            <svg class="w-3 h-3"><use href="{{icon}}#icon-check"/></svg>
+                            Save
+                        </button>
+                        <button class="btn btn-xs btn-ghost" @click="cancelAnnotation()">Cancel</button>
                     </div>
                 </div>
-
             </div>
 
             <!-- Floating bottom toolbar — outside scroll container, pinned to bottom of PDF panel -->
@@ -280,6 +282,11 @@
                     <svg class="w-3.5 h-3.5"><use href="{{icon}}#icon-chat-bubble-left"/></svg>
                     Annotations
                 </a>
+                <a class="tab tab-sm gap-1" :class="{'tab-active': rightTab === 'matrix'}"
+                   @click="rightTab = 'matrix'; loadPaperMatrixCells()">
+                    <svg class="w-3.5 h-3.5"><use href="{{icon}}#icon-tag"/></svg>
+                    Matrix
+                </a>
             </div>
 
             <!-- Screening Tab -->
@@ -349,9 +356,9 @@
 
                 <!-- DETAIL VIEW (when an annotation is selected) -->
                 <div x-show="selectedAnnotation" class="p-3 space-y-3">
-                    <button class="btn btn-xs btn-ghost gap-1" @click="selectedAnnotation = null">
+                    <button class="btn btn-xs btn-ghost gap-1" @click="if (annotationReturnTab) { rightTab = annotationReturnTab; annotationReturnTab = null; } selectedAnnotation = null;">
                         <svg class="w-3.5 h-3.5"><use href="{{icon}}#icon-arrow-left"/></svg>
-                        Back to list
+                        <span x-text="annotationReturnTab === 'matrix' ? 'Back to matrix' : 'Back to list'"></span>
                     </button>
 
                     <div class="flex items-center gap-2 text-sm flex-wrap">
@@ -494,7 +501,7 @@
 
                     <template x-for="ann in paperAnnotations" :key="ann.id">
                         <div class="p-2 bg-base-300 rounded-lg text-sm space-y-1.5 cursor-pointer hover:bg-base-200 transition-colors"
-                             @click="openAnnotationDetail(ann)">
+                             @click="annotationReturnTab = null; openAnnotationDetail(ann)">
                             <div class="flex items-start gap-2">
                                 <span class="badge badge-xs badge-ghost flex-shrink-0">p.<span x-text="ann.page_number"></span></span>
                                 <p class="flex-1 text-xs italic opacity-80 line-clamp-2" x-text="ann.selected_text || ann.note || '(area annotation)'"></p>
@@ -512,6 +519,71 @@
                     <div x-show="paperAnnotations.length === 0">
                         <p class="text-sm opacity-50 text-center py-4">No annotations yet. Highlight text in the PDF or use the box tool.</p>
                     </div>
+                </div>
+            </div>
+
+            <!-- Matrix Tab -->
+            <div class="flex-1 overflow-y-auto p-3 space-y-2" x-show="rightTab === 'matrix'">
+                <template x-for="code in codes" :key="'mt-'+code.id">
+                    <div class="collapse collapse-arrow bg-base-300 rounded-lg">
+                        <input type="checkbox" checked>
+                        <div class="collapse-title py-2 px-3 min-h-0 flex items-center gap-2 text-sm">
+                            <div class="w-3 h-3 rounded-full flex-shrink-0"
+                                 :style="'background:' + code.color"></div>
+                            <span class="font-semibold flex-1" x-text="code.name"></span>
+                            <span class="badge badge-xs badge-ghost"
+                                  x-show="getEvidenceForCode(code).length > 0"
+                                  x-text="getEvidenceForCode(code).length + ' ev.'"></span>
+                        </div>
+                        <div class="collapse-content px-3 pb-3 space-y-2">
+                            <!-- Cell editor: dropdown if sub-codes, text if not -->
+                            <template x-if="code.children.length > 0">
+                                <select class="select select-sm w-full"
+                                    :value="paperMatrixCells[code.id]?.value || ''"
+                                    @change="savePaperMatrixCell(code.id, $event.target.value)">
+                                    <option value="">-- select --</option>
+                                    <template x-for="sub in code.children" :key="'ms-'+sub.id">
+                                        <option :value="sub.name" x-text="sub.name"></option>
+                                    </template>
+                                </select>
+                            </template>
+                            <template x-if="code.children.length === 0">
+                                <input type="text" class="input input-sm w-full"
+                                    placeholder="Enter value..."
+                                    :value="paperMatrixCells[code.id]?.value || ''"
+                                    @change="savePaperMatrixCell(code.id, $event.target.value)">
+                            </template>
+
+                            <!-- Supporting annotations -->
+                            <template x-if="getEvidenceForCode(code).length > 0">
+                                <div class="space-y-1 mt-1">
+                                    <label class="text-xs font-semibold uppercase opacity-60">Evidence</label>
+                                    <template x-for="ann in getEvidenceForCode(code)" :key="'me-'+ann.id">
+                                        <div class="p-1.5 bg-base-200 rounded text-xs cursor-pointer hover:bg-base-100 transition-colors"
+                                             @click="annotationReturnTab = 'matrix'; openAnnotationDetail(ann); rightTab = 'annotations'">
+                                            <div class="flex items-center gap-1.5">
+                                                <span class="badge badge-xs badge-ghost flex-shrink-0">p.<span x-text="ann.page_number"></span></span>
+                                                <p class="flex-1 italic opacity-80 line-clamp-2"
+                                                   x-text="ann.selected_text || ann.note || '(area)'"></p>
+                                            </div>
+                                            <div class="flex flex-wrap gap-1 mt-1">
+                                                <template x-for="c in ann.codes.filter(c => c.id === code.id || c.parent_id === code.id)"
+                                                          :key="'mc-'+c.id">
+                                                    <span class="badge badge-xs"
+                                                          :style="'background:' + c.color + '33; color:' + c.color + '; border-color:' + c.color"
+                                                          x-text="c.name"></span>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+
+                <div x-show="codes.length === 0" class="text-sm opacity-50 text-center py-4">
+                    No codes defined yet. Open the Code Builder to create codes.
                 </div>
             </div>
 

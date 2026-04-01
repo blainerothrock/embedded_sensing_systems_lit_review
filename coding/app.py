@@ -1,5 +1,6 @@
 """Lit Review Coding — Flask web application."""
 
+import argparse
 import os
 from pathlib import Path
 
@@ -10,6 +11,17 @@ import schema
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB max upload
+
+SCRIPT_NAME = os.environ.get("SCRIPT_NAME", "")
+if SCRIPT_NAME:
+    class PrefixMiddleware:
+        def __init__(self, app, prefix):
+            self.app = app
+            self.prefix = prefix
+        def __call__(self, environ, start_response):
+            environ["SCRIPT_NAME"] = self.prefix
+            return self.app(environ, start_response)
+    app.wsgi_app = PrefixMiddleware(app.wsgi_app, SCRIPT_NAME)
 
 PDF_DIR = Path(__file__).parent / "pdfs"
 PDF_DIR.mkdir(exist_ok=True)
@@ -258,6 +270,14 @@ def api_matrix():
     return jsonify(matrix)
 
 
+@app.route("/api/papers/<int:doc_id>/matrix-cells")
+def api_paper_matrix_cells(doc_id):
+    conn = db.get_connection()
+    cells = db.get_paper_matrix_cells(conn, doc_id)
+    conn.close()
+    return jsonify(cells)
+
+
 @app.route("/api/matrix/cell", methods=["POST"])
 def api_save_matrix_cell():
     data = request.get_json()
@@ -295,8 +315,13 @@ def api_stats():
 # --- Main ---
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=5001)
+    args = parser.parse_args()
+
     init_db()
-    app.run(debug=True, port=5001)
+    app.run(host=args.host, port=args.port, debug=True)
 
 
 if __name__ == "__main__":

@@ -126,13 +126,6 @@ body.resizing {
     z-index: 10;
 }
 
-/* Floating annotation toolbar */
-.annotation-toolbar {
-    position: absolute;
-    z-index: 50;
-    transform: translateX(-50%);
-}
-
 /* Line clamp utility */
 .line-clamp-2 {
     display: -webkit-box;
