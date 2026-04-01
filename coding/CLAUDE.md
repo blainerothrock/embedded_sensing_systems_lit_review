@@ -6,16 +6,28 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 A web application for qualitative coding of PDF papers as part of a systematic literature review for a PhD dissertation. Built for a single user (the researcher). The app handles Phase 3 full-text screening and qualitative coding of papers that passed earlier screening phases.
 
-**Core workflow:** Read PDF papers, highlight text or draw areas, tag annotations with codes, fill in a synthesis matrix, and make include/exclude screening decisions.
+**Core workflow:** Read PDF papers, highlight text or draw areas, tag annotations with codes, write notes (markdown), fill in a synthesis matrix, and make include/exclude screening decisions.
 
 ## Commands
 
 ```bash
-# Install dependencies
+# Install Python dependencies
 uv sync
 
-# Run the application (port 5001)
-uv run python app.py
+# Install frontend dependencies
+cd frontend && npm install
+
+# Development (two terminals)
+uv run python app.py                    # Flask API on :5001
+cd frontend && npm run dev              # Vite HMR on :5173
+
+# Production build + desktop app
+cd frontend && npm run build            # outputs to static/dist/
+uv run python app.py --desktop          # pywebview window
+
+# Desktop with Vite dev server (hot reload)
+cd frontend && npm run dev &
+uv run python app.py --desktop --dev-url http://localhost:5173
 
 # Reset database (WARNING: drops all coding data)
 rm lit_review.db && cp ../lit_review.db . && uv run python app.py
@@ -23,67 +35,95 @@ rm lit_review.db && cp ../lit_review.db . && uv run python app.py
 
 ## Architecture
 
-**Stack:** Flask + SQLite + Alpine.js + DaisyUI (Tailwind CSS) + PDF.js. No build step — all frontend deps loaded via CDN.
+**Stack:** Flask (Python) + SQLite + Vue 3 + Pinia + Vite + DaisyUI 4 (Tailwind CSS 3) + PDF.js
 
-**Single-page app** served by Flask at `/`. All data flows through JSON API endpoints. PDF.js renders PDFs client-side.
+**Frontend** is a Vue 3 SPA in `frontend/` built with Vite. In production, Vite outputs to `static/dist/` and Flask serves `index.html`. In development, Vite dev server on :5173 proxies `/api/*` to Flask on :5001.
+
+**Backend** is a Flask JSON API. No server-side rendering.
 
 ### Key Files
 
 | File | Purpose |
 |------|---------|
-| `app.py` | Flask routes — pages, API endpoints |
+| `app.py` | Flask routes — API endpoints, serves built Vue app |
 | `db.py` | Database queries — all SQLite access |
 | `schema.py` | Table creation and migrations (runs on startup) |
-| `templates/index.html` | The entire SPA — Alpine.js + DaisyUI components |
-| `static/js/app.js` | Alpine.js app logic — state, methods, PDF rendering |
-| `static/css/app.css` | Custom styles (PDF layers, modes, resize handles) |
-| `static/icons.svg` | Heroicons v2.1.5 SVG sprite sheet |
+| `llm.py` | LLM provider abstraction (Ollama, Claude) |
+| `frontend/` | Vue 3 SPA source (see Frontend Architecture below) |
+| `static/dist/` | Vite build output (gitignored) |
+
+### Frontend Architecture
+
+```
+frontend/
+├── src/
+│   ├── main.js              # Vue app bootstrap + Pinia
+│   ├── App.vue              # Root — navbar, view switching, keyboard shortcuts
+│   ├── stores/              # Pinia stores (Composition API)
+│   │   ├── workspace.js     # Papers, annotations, review, paper notes
+│   │   ├── codebook.js      # Hierarchical codes
+│   │   ├── matrix.js        # Matrix columns, cells, debounced saves
+│   │   ├── chat.js          # LLM chat with SSE streaming
+│   │   └── ui.js            # View, theme, layout, toasts
+│   ├── composables/
+│   │   ├── usePdf.js        # PDF.js with shallowRef (avoids Proxy issues)
+│   │   ├── useKeyboard.js   # Global shortcuts (H/T/B, arrows, Escape, Cmd+S)
+│   │   └── useDebounce.js   # Debounce utility
+│   ├── components/
+│   │   ├── AppNavbar.vue           # View tabs, paper nav, toolbar actions
+│   │   ├── WorkspaceLayout.vue     # 3-column resizable layout
+│   │   ├── PaperList.vue           # Search, filter, paper list
+│   │   ├── PaperListItem.vue       # Single paper row
+│   │   ├── PdfViewer.vue           # PDF.js canvas, text/box selection, overlays
+│   │   ├── PdfToolbar.vue          # Mode buttons, zoom, page indicator
+│   │   ├── DetailPanel.vue         # Right sidebar: metadata, tabs, paper notes
+│   │   ├── PaperDetails.vue        # Authors, venue, abstract, keywords
+│   │   ├── ScreeningPanel.vue      # Include/exclude decision + notes
+│   │   ├── AnnotationList.vue      # Annotation detail + list view
+│   │   ├── RichTextEditor.vue      # Markdown textarea + rendered preview
+│   │   ├── CodeSelector.vue        # Reusable hierarchical code picker
+│   │   ├── MatrixView.vue          # Full matrix table view
+│   │   ├── ThemesView.vue          # Cross-paper annotation view by code
+│   │   ├── ChatPanel.vue           # LLM chat with SSE streaming
+│   │   ├── CodeBuilderModal.vue    # Code CRUD modal
+│   │   ├── ColumnEditorModal.vue   # Matrix column CRUD modal
+│   │   └── ToastContainer.vue      # Notification toasts
+│   └── api/
+│       └── index.js          # Centralized fetch wrapper for all endpoints
+├── vite.config.js            # Vite config with Flask proxy
+├── tailwind.config.js        # Tailwind + DaisyUI theme (dark/light)
+└── package.json
+```
 
 ### Database
 
 Shares `lit_review.db` with the sibling `lit-review/` TUI app. This app reads existing tables (`document`, `article`, `inproceedings`, `inbook`, `pass_review`, `exclusion_code`) and adds its own:
 
-- `code` — Hierarchical tags. Top-level codes (parent_id=NULL) = matrix columns. Sub-codes = dropdown options in matrix cells.
+- `code` — Hierarchical tags. Top-level codes with sub-codes.
 - `annotation` — Highlighted text or drawn areas on PDFs. Types: `highlight`, `note`, `area`.
 - `annotation_code` — Many-to-many junction linking annotations to codes, with optional relationship notes.
-- `matrix_cell` — Synthesis values per paper x top-level code. Evidence comes from annotations.
+- `matrix_column` — Column definitions with type (enum_single, enum_multi, text) and linked codes.
+- `matrix_column_option` — Dropdown/checkbox values for enum columns.
+- `matrix_column_code` — Links columns to codes for evidence tracking.
+- `matrix_cell` — Synthesis values per paper x column.
 - `document_pdf` — Tracks uploaded PDF files per document.
+- `paper_note` — Per-paper markdown notes (separate from review notes).
+- `paper_chat` / `chat_message` — LLM conversation history per paper.
 
 Phase 3 screening reuses `pass_review` with `pass_number=3`.
 
-### Frontend Architecture
-
-**Alpine.js** manages all state in a single `app` data object on `<body>`. Key state groups:
-
-- **Papers**: `papers[]`, `selectedPaperId`, `selectedPaper`, search/filter state
-- **PDF**: `pdfScale`, `pdfMode` (hand/text/box), page tracking. PDF.js document stored outside Alpine (`_pdfDoc`) to avoid Proxy issues with private class fields.
-- **Annotations**: `paperAnnotations[]`, `selectedAnnotation`, creation toolbar state
-- **Codes**: `codes[]` (tree), `codeUsageCounts`, code picker state
-- **Matrix Columns**: `matrixColumns[]`, `paperMatrixCells`, column editor state
-- **Themes**: `selectedThemeCodeId`, `themesAnnotations[]`
-- **UI**: `view` (papers/matrix/themes), `theme`, `sidebarOpen`, panel widths, `rightTab`
-
-**PDF.js** loaded dynamically via `import()`. Pages rendered to `<canvas>` with a `textLayer` overlay for text selection and an `annotationLayer` for highlight rendering. Coordinates stored in PDF user space, converted to/from viewport on render.
-
-**Three PDF interaction modes:**
-- **Hand (H)**: Pan/drag to scroll, double-click to fit-width
-- **Text (T)**: Select text to create highlight annotations
-- **Box (B)**: Draw rectangles for area annotations
-
 ### Data Model
-
-Codes and matrix columns are **independent concepts**:
 
 ```
 code (hierarchical tags for annotation)
   ├── top-level code (e.g., "Challenges", "Application Framing")
-  │     ├── sub-code
+  │     ├── sub-code (with description for LLM context)
   │     └── sub-code
   └── top-level code
 
 annotation (on PDF)
-  ├── annotation_code → code (with relationship note)
-  └── annotation_code → code
+  ├── annotation_code → code (with relationship note, markdown)
+  └── note (markdown)
 
 matrix_column (independent of codes)
   ├── column_type: enum_single | enum_multi | text
@@ -92,6 +132,8 @@ matrix_column (independent of codes)
 
 matrix_cell (paper × column → value)
   └── evidence: annotations tagged with codes linked to this column
+
+paper_note (per-paper markdown notes)
 ```
 
 ## API Routes
@@ -102,6 +144,10 @@ matrix_cell (paper × column → value)
 - `POST /api/papers/<id>/review` — Save include/exclude decision
 - `GET /api/exclusion-codes` — List exclusion codes
 - `GET /api/stats` — Phase 3 progress counts
+
+### Paper Notes
+- `GET /api/papers/<id>/notes` — Get paper-level markdown notes
+- `PUT /api/papers/<id>/notes` — Save paper-level notes
 
 ### PDF
 - `POST /api/papers/<id>/upload-pdf` — Upload PDF file
@@ -143,19 +189,33 @@ matrix_cell (paper × column → value)
 - `GET /api/themes/<code_id>` — Annotations for a code across all papers
 - `GET /api/papers/<id>/summary` — Annotations grouped by code for a paper
 
+### Chat
+- `GET /api/papers/<id>/chats` — List chat sessions for a paper
+- `POST /api/papers/<id>/chats` — Create chat session
+- `GET /api/chats/<id>/messages` — Get messages for a chat
+- `DELETE /api/chats/<id>` — Delete chat session
+- `POST /api/papers/<id>/chat` — Send message (SSE streaming response)
+- `GET /api/llm/models` — Available LLM models
+
 ## Key Patterns
 
-### PDF.js + Alpine.js Proxy Issue
-PDF.js objects use private class fields (`#field`) which break through Alpine's Proxy wrappers. The PDF document is stored in a plain variable (`_pdfDoc`) outside Alpine's reactive state.
+### PDF.js + Vue Proxy Issue
+PDF.js objects use private class fields (`#field`) which break through Vue's reactive Proxy wrappers. The `usePdf` composable uses `shallowRef()` for `pdfDoc` and `pageViewports` to avoid deep proxying.
 
 ### Coordinate System
 Annotation rects stored in PDF user space (72 DPI). Converted to/from viewport using `viewport.convertToPdfPoint()` and `viewport.convertToViewportPoint()`. Each rect includes a `page` number for multi-page annotations.
 
-### Text Layer
-Uses PDF.js v5 `TextLayer` class with CSS custom properties `--scale-factor` and `--scale-round-x/y`. The `.textLayer` class is custom CSS (not the official `pdf_viewer.css`).
+### Rich Text Editing
+Notes (paper notes, annotation notes, code-annotation notes) use the `RichTextEditor` component: plain markdown textarea for editing (monospace font), rendered markdown for display. Click to edit, blur or Cmd+S to save. No WYSIWYG — the user prefers raw markdown editing.
 
-### HTML Tag Closing
-When editing multi-line HTML tags in `index.html`, ensure the closing `>` is preserved. This has been a recurring source of bugs where attributes on new lines cause the tag to be left unclosed.
+### Custom Compact Collapsible
+DaisyUI's built-in collapse has layout issues with compact single-line headers (arrow misaligned, wasted space). Use the custom `compact-collapse` CSS pattern instead: hidden checkbox + label + `grid-template-rows` animation. See `app.css`.
+
+### Text Layer
+Uses PDF.js `TextLayer` class with CSS custom properties `--scale-factor` and `--scale-round-x/y`. The `.textLayer` class is custom CSS (not the official `pdf_viewer.css`).
+
+### Keyboard Shortcut Safety
+`useKeyboard.js` checks `e.target.isContentEditable` and `e.target.closest('[contenteditable]')` in addition to standard form elements, preventing shortcuts from firing during rich text editing.
 
 ## Keyboard Shortcuts
 
@@ -171,7 +231,8 @@ When editing multi-line HTML tags in `index.html`, ensure the closing `>` is pre
 
 ## How to Help
 
-- **Bug fixes**: Check browser console for errors. Common issues: missing `>` on multi-line HTML tags, Alpine Proxy issues with PDF.js, DaisyUI dropdown z-index problems.
-- **New features**: Follow existing patterns — add db.py function, app.py route, then Alpine method + HTML template.
-- **Code picker**: Used in two places (annotation creation toolbar and annotation detail view). Both use `codes` tree with `codeMatchesSearch`/`subCodeMatchesSearch` filters.
-- **Annotations**: Backend supports all CRUD. Frontend creates via text selection (text mode) or rectangle drawing (box mode). Overlays rendered in `renderAnnotationOverlays()`.
+- **Bug fixes**: Check browser console for errors. Common issues: Vue reactivity with PDF.js objects (use `shallowRef`), DaisyUI class differences between v4/v5.
+- **New features**: Add `db.py` function → `app.py` route → API wrapper in `api/index.js` → Pinia store action → Vue component.
+- **Notes/text editing**: Use `RichTextEditor` component. Store markdown, render with `marked`. No WYSIWYG.
+- **Collapsible sections**: Use the custom `compact-collapse` CSS pattern, not DaisyUI's collapse component.
+- **Annotations**: Backend supports all CRUD. Frontend creates via text selection (text mode) or rectangle drawing (box mode). Overlays rendered imperatively by `usePdf.renderAnnotationOverlays()`.
