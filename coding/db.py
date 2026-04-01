@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "lit_review.db"
@@ -14,12 +15,23 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
+@contextmanager
+def connect():
+    """Context manager that opens and auto-closes a DB connection."""
+    conn = get_connection()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
 # --- Papers (read from existing tables) ---
 
 
-def _paper_select() -> str:
+def _paper_select(extra_columns: str = "") -> str:
     """Common SELECT + JOIN fragment for getting papers with type-specific metadata."""
-    return """
+    extra = f", {extra_columns}" if extra_columns else ""
+    return f"""
         SELECT
             d.id, d.title, d.doi, d.url, d.entry_type, d.bibtex_key,
             COALESCE(a.author, ip.author, ib.author) as author,
@@ -29,7 +41,7 @@ def _paper_select() -> str:
             COALESCE(a.journal, ip.booktitle, ib.booktitle) as venue,
             dp.pdf_path,
             pr3.decision as phase3_decision,
-            pr3.notes as phase3_notes
+            pr3.notes as phase3_notes{extra}
         FROM document d
         LEFT JOIN article a ON a.document_id = d.id
         LEFT JOIN inproceedings ip ON ip.document_id = d.id
@@ -76,26 +88,8 @@ def get_phase3_papers(conn: sqlite3.Connection, search: str = "", status: str = 
 
 def get_paper(conn: sqlite3.Connection, document_id: int) -> dict | None:
     """Get a single paper with all metadata."""
-    row = conn.execute("""
-        SELECT
-            d.id, d.title, d.doi, d.url, d.entry_type, d.bibtex_key,
-            COALESCE(a.author, ip.author, ib.author) as author,
-            COALESCE(a.year, ip.year, ib.year) as year,
-            COALESCE(a.abstract, ip.abstract, ib.abstract) as abstract,
-            COALESCE(a.keywords, ip.keywords, ib.keywords) as keywords,
-            COALESCE(a.journal, ip.booktitle, ib.booktitle) as venue,
-            dp.pdf_path,
-            pr3.id as phase3_review_id,
-            pr3.decision as phase3_decision,
-            pr3.notes as phase3_notes
-        FROM document d
-        LEFT JOIN article a ON a.document_id = d.id
-        LEFT JOIN inproceedings ip ON ip.document_id = d.id
-        LEFT JOIN inbook ib ON ib.document_id = d.id
-        LEFT JOIN document_pdf dp ON dp.document_id = d.id
-        LEFT JOIN pass_review pr3 ON pr3.document_id = d.id AND pr3.pass_number = 3
-        WHERE d.id = ?
-    """, (document_id,)).fetchone()
+    query = _paper_select(extra_columns="pr3.id as phase3_review_id") + " WHERE d.id = ?"
+    row = conn.execute(query, (document_id,)).fetchone()
     if row is None:
         return None
 
@@ -284,8 +278,8 @@ def delete_code(conn: sqlite3.Connection, code_id: int) -> bool:
     ).fetchone()["n"]
     if count > 0:
         return False
-    # Also clean up matrix_cell references
-    conn.execute("DELETE FROM matrix_cell WHERE code_id = ?", (code_id,))
+    # Also clean up matrix_column_code references
+    conn.execute("DELETE FROM matrix_column_code WHERE code_id = ?", (code_id,))
     conn.execute("DELETE FROM code WHERE id = ?", (code_id,))
     conn.commit()
     return True
@@ -295,24 +289,33 @@ def delete_code(conn: sqlite3.Connection, code_id: int) -> bool:
 
 
 def get_annotations(conn: sqlite3.Connection, document_id: int) -> list[dict]:
-    """Get all annotations for a document with their codes."""
+    """Get all annotations for a document with their codes (single query)."""
     rows = conn.execute("""
-        SELECT * FROM annotation WHERE document_id = ? ORDER BY page_number, id
+        SELECT ann.*,
+               c.id as code_id, c.name as code_name, c.color as code_color,
+               c.parent_id as code_parent_id, ac.note as ac_note
+        FROM annotation ann
+        LEFT JOIN annotation_code ac ON ac.annotation_id = ann.id
+        LEFT JOIN code c ON c.id = ac.code_id
+        WHERE ann.document_id = ?
+        ORDER BY ann.page_number, ann.id, c.name
     """, (document_id,)).fetchall()
 
-    result = []
+    annotations = {}
     for row in rows:
-        ann = dict(row)
-        codes = conn.execute("""
-            SELECT c.id, c.name, c.color, c.parent_id, ac.note as ac_note
-            FROM annotation_code ac
-            JOIN code c ON c.id = ac.code_id
-            WHERE ac.annotation_id = ?
-            ORDER BY c.name
-        """, (ann["id"],)).fetchall()
-        ann["codes"] = [dict(c) for c in codes]
-        result.append(ann)
-    return result
+        ann_id = row["id"]
+        if ann_id not in annotations:
+            ann = {k: row[k] for k in row.keys()
+                   if k not in ("code_id", "code_name", "code_color", "code_parent_id", "ac_note")}
+            ann["codes"] = []
+            annotations[ann_id] = ann
+        if row["code_id"] is not None:
+            annotations[ann_id]["codes"].append({
+                "id": row["code_id"], "name": row["code_name"],
+                "color": row["code_color"], "parent_id": row["code_parent_id"],
+                "ac_note": row["ac_note"],
+            })
+    return list(annotations.values())
 
 
 def create_annotation(
@@ -410,53 +413,154 @@ def get_code_usage_counts(conn: sqlite3.Connection) -> dict[int, int]:
     return {row["code_id"]: row["n"] for row in rows}
 
 
-# --- Matrix ---
+# --- Matrix Columns ---
+
+
+def get_matrix_columns(conn: sqlite3.Connection) -> list[dict]:
+    """Get all matrix columns with options and linked codes."""
+    cols = conn.execute(
+        "SELECT * FROM matrix_column ORDER BY sort_order, id"
+    ).fetchall()
+    result = []
+    for col in cols:
+        c = dict(col)
+        c["options"] = [dict(r) for r in conn.execute(
+            "SELECT * FROM matrix_column_option WHERE column_id = ? ORDER BY sort_order, id",
+            (c["id"],)
+        ).fetchall()]
+        c["linked_codes"] = [dict(r) for r in conn.execute("""
+            SELECT c.id, c.name, c.color, c.parent_id
+            FROM matrix_column_code mcc
+            JOIN code c ON c.id = mcc.code_id
+            WHERE mcc.column_id = ?
+            ORDER BY c.name
+        """, (c["id"],)).fetchall()]
+        result.append(c)
+    return result
+
+
+def create_matrix_column(
+    conn: sqlite3.Connection, name: str, column_type: str,
+    description: str = "", color: str = "#FFEB3B", sort_order: int = 0,
+) -> dict:
+    cursor = conn.execute("""
+        INSERT INTO matrix_column (name, column_type, description, color, sort_order)
+        VALUES (?, ?, ?, ?, ?)
+    """, (name, column_type, description, color, sort_order))
+    conn.commit()
+    return dict(conn.execute(
+        "SELECT * FROM matrix_column WHERE id = ?", (cursor.lastrowid,)
+    ).fetchone())
+
+
+def update_matrix_column(conn: sqlite3.Connection, column_id: int, **kwargs) -> dict | None:
+    allowed = {"name", "description", "color", "sort_order", "column_type"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if not updates:
+        return None
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    conn.execute(
+        f"UPDATE matrix_column SET {set_clause} WHERE id = ?",
+        (*updates.values(), column_id)
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM matrix_column WHERE id = ?", (column_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def delete_matrix_column(conn: sqlite3.Connection, column_id: int) -> bool:
+    conn.execute("DELETE FROM matrix_cell WHERE column_id = ?", (column_id,))
+    conn.execute("DELETE FROM matrix_column_option WHERE column_id = ?", (column_id,))
+    conn.execute("DELETE FROM matrix_column_code WHERE column_id = ?", (column_id,))
+    cursor = conn.execute("DELETE FROM matrix_column WHERE id = ?", (column_id,))
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def create_column_option(
+    conn: sqlite3.Connection, column_id: int, value: str, sort_order: int = 0,
+) -> dict:
+    cursor = conn.execute(
+        "INSERT INTO matrix_column_option (column_id, value, sort_order) VALUES (?, ?, ?)",
+        (column_id, value, sort_order)
+    )
+    conn.commit()
+    return dict(conn.execute(
+        "SELECT * FROM matrix_column_option WHERE id = ?", (cursor.lastrowid,)
+    ).fetchone())
+
+
+def delete_column_option(conn: sqlite3.Connection, option_id: int) -> bool:
+    cursor = conn.execute("DELETE FROM matrix_column_option WHERE id = ?", (option_id,))
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def link_column_code(conn: sqlite3.Connection, column_id: int, code_id: int) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO matrix_column_code (column_id, code_id) VALUES (?, ?)",
+        (column_id, code_id)
+    )
+    conn.commit()
+
+
+def unlink_column_code(conn: sqlite3.Connection, column_id: int, code_id: int) -> None:
+    conn.execute(
+        "DELETE FROM matrix_column_code WHERE column_id = ? AND code_id = ?",
+        (column_id, code_id)
+    )
+    conn.commit()
+
+
+# --- Matrix Data ---
 
 
 def get_matrix(conn: sqlite3.Connection) -> dict:
-    """Get the coding matrix: papers × top-level codes with cell values and evidence counts."""
-    codes = get_codes(conn)  # top-level codes with children
+    """Get the coding matrix: papers × matrix columns with cell values and evidence."""
+    columns = get_matrix_columns(conn)
 
-    papers = conn.execute("""
-        SELECT d.id, d.title,
-            COALESCE(a.author, ip.author, ib.author) as author,
-            COALESCE(a.year, ip.year, ib.year) as year
-        FROM document d
+    papers = conn.execute(
+        _paper_select() + """
         INNER JOIN pass_review pr2 ON pr2.document_id = d.id
             AND pr2.pass_number = 2 AND pr2.decision = 'include'
-        LEFT JOIN article a ON a.document_id = d.id
-        LEFT JOIN inproceedings ip ON ip.document_id = d.id
-        LEFT JOIN inbook ib ON ib.document_id = d.id
         ORDER BY d.title
     """).fetchall()
 
     # Get matrix cell values
     cells = conn.execute("SELECT * FROM matrix_cell").fetchall()
-    cell_map = {}  # {doc_id: {code_id: {value, notes}}}
+    cell_map = {}  # {doc_id: {column_id: {value, notes}}}
     for c in cells:
-        cell_map.setdefault(c["document_id"], {})[c["code_id"]] = {
+        cell_map.setdefault(c["document_id"], {})[c["column_id"]] = {
             "value": c["value"],
             "notes": c["notes"],
         }
 
-    # Get annotation evidence counts per paper × top-level code
-    # A top-level code's evidence = annotations tagged with it OR any of its sub-codes
-    evidence_map = {}  # {doc_id: {top_code_id: count}}
-    for code in codes:
-        code_ids = [code["id"]] + [ch["id"] for ch in code["children"]]
-        placeholders = ",".join("?" * len(code_ids))
+    # Get annotation evidence counts per paper × column (via linked codes)
+    evidence_map = {}  # {doc_id: {column_id: count}}
+    for col in columns:
+        linked_code_ids = [lc["id"] for lc in col["linked_codes"]]
+        if not linked_code_ids:
+            continue
+        # Also include sub-codes of linked codes
+        all_code_ids = list(linked_code_ids)
+        for code_id in linked_code_ids:
+            subs = conn.execute(
+                "SELECT id FROM code WHERE parent_id = ?", (code_id,)
+            ).fetchall()
+            all_code_ids.extend(r["id"] for r in subs)
+        placeholders = ",".join("?" * len(all_code_ids))
         rows = conn.execute(f"""
             SELECT ann.document_id, COUNT(DISTINCT ann.id) as n
             FROM annotation ann
             JOIN annotation_code ac ON ac.annotation_id = ann.id
             WHERE ac.code_id IN ({placeholders})
             GROUP BY ann.document_id
-        """, code_ids).fetchall()
+        """, all_code_ids).fetchall()
         for r in rows:
-            evidence_map.setdefault(r["document_id"], {})[code["id"]] = r["n"]
+            evidence_map.setdefault(r["document_id"], {})[col["id"]] = r["n"]
 
     return {
-        "codes": codes,
+        "columns": columns,
         "papers": [dict(p) for p in papers],
         "cells": cell_map,
         "evidence": evidence_map,
@@ -464,31 +568,31 @@ def get_matrix(conn: sqlite3.Connection) -> dict:
 
 
 def save_matrix_cell(
-    conn: sqlite3.Connection, document_id: int, code_id: int,
+    conn: sqlite3.Connection, document_id: int, column_id: int,
     value: str | None = None, notes: str | None = None,
 ) -> dict:
     conn.execute("""
-        INSERT INTO matrix_cell (document_id, code_id, value, notes, updated_at)
+        INSERT INTO matrix_cell (document_id, column_id, value, notes, updated_at)
         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(document_id, code_id)
+        ON CONFLICT(document_id, column_id)
         DO UPDATE SET value = excluded.value, notes = excluded.notes,
                       updated_at = CURRENT_TIMESTAMP
-    """, (document_id, code_id, value, notes))
+    """, (document_id, column_id, value, notes))
     conn.commit()
     row = conn.execute(
-        "SELECT * FROM matrix_cell WHERE document_id = ? AND code_id = ?",
-        (document_id, code_id)
+        "SELECT * FROM matrix_cell WHERE document_id = ? AND column_id = ?",
+        (document_id, column_id)
     ).fetchone()
     return dict(row)
 
 
 def get_paper_matrix_cells(conn: sqlite3.Connection, document_id: int) -> dict[int, dict]:
-    """Get matrix cells for a single paper: {code_id: {value, notes}}."""
+    """Get matrix cells for a single paper: {column_id: {value, notes}}."""
     rows = conn.execute(
-        "SELECT code_id, value, notes FROM matrix_cell WHERE document_id = ?",
+        "SELECT column_id, value, notes FROM matrix_cell WHERE document_id = ?",
         (document_id,)
     ).fetchall()
-    return {row["code_id"]: {"value": row["value"], "notes": row["notes"]} for row in rows}
+    return {row["column_id"]: {"value": row["value"], "notes": row["notes"]} for row in rows}
 
 
 # --- Coding Completeness ---
@@ -497,7 +601,7 @@ def get_paper_matrix_cells(conn: sqlite3.Connection, document_id: int) -> dict[i
 def get_coding_completeness(conn: sqlite3.Connection) -> dict[int, dict]:
     """Get matrix completeness per paper: {document_id: {filled: N, total: N}}."""
     total_columns = conn.execute(
-        "SELECT COUNT(*) as n FROM code WHERE parent_id IS NULL"
+        "SELECT COUNT(*) as n FROM matrix_column"
     ).fetchone()["n"]
 
     if total_columns == 0:
@@ -514,3 +618,58 @@ def get_coding_completeness(conn: sqlite3.Connection) -> dict[int, dict]:
         row["document_id"]: {"filled": row["filled"], "total": total_columns}
         for row in rows
     }
+
+
+# --- Themes & Summary ---
+
+
+def get_annotations_by_code(conn: sqlite3.Connection, code_id: int) -> list[dict]:
+    """Get all annotations tagged with a code (or its sub-codes) across all papers."""
+    # Get the code and its sub-codes
+    all_ids = [code_id]
+    subs = conn.execute("SELECT id FROM code WHERE parent_id = ?", (code_id,)).fetchall()
+    all_ids.extend(r["id"] for r in subs)
+
+    placeholders = ",".join("?" * len(all_ids))
+    rows = conn.execute(f"""
+        SELECT ann.*, d.title as paper_title,
+               COALESCE(a.year, ip.year, ib.year) as paper_year
+        FROM annotation ann
+        JOIN annotation_code ac ON ac.annotation_id = ann.id
+        JOIN document d ON d.id = ann.document_id
+        LEFT JOIN article a ON a.document_id = d.id
+        LEFT JOIN inproceedings ip ON ip.document_id = d.id
+        LEFT JOIN inbook ib ON ib.document_id = d.id
+        WHERE ac.code_id IN ({placeholders})
+        GROUP BY ann.id
+        ORDER BY d.title, ann.page_number
+    """, all_ids).fetchall()
+
+    result = []
+    for row in rows:
+        ann = dict(row)
+        codes = conn.execute("""
+            SELECT c.id, c.name, c.color, c.parent_id
+            FROM annotation_code ac JOIN code c ON c.id = ac.code_id
+            WHERE ac.annotation_id = ?
+        """, (ann["id"],)).fetchall()
+        ann["codes"] = [dict(c) for c in codes]
+        result.append(ann)
+    return result
+
+
+def get_paper_annotation_summary(conn: sqlite3.Connection, document_id: int) -> list[dict]:
+    """Get annotations for a paper grouped by top-level code."""
+    codes = get_codes(conn)  # tree structure
+    annotations = get_annotations(conn, document_id)
+
+    result = []
+    for code in codes:
+        all_ids = {code["id"]} | {ch["id"] for ch in code.get("children", [])}
+        matching = [a for a in annotations if any(c["id"] in all_ids for c in a["codes"])]
+        if matching:
+            result.append({
+                "code": code,
+                "annotations": matching,
+            })
+    return result

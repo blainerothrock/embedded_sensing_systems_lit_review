@@ -30,9 +30,8 @@ PDF_DIR.mkdir(exist_ok=True)
 # --- Startup ---
 
 def init_db():
-    conn = db.get_connection()
-    schema.migrate(conn)
-    conn.close()
+    with db.connect() as conn:
+        schema.migrate(conn)
 
 
 # --- Page ---
@@ -48,17 +47,15 @@ def index():
 def api_papers():
     search = request.args.get("search", "")
     status = request.args.get("status", "all")
-    conn = db.get_connection()
-    papers = db.get_phase3_papers(conn, search=search, status=status)
-    conn.close()
+    with db.connect() as conn:
+        papers = db.get_phase3_papers(conn, search=search, status=status)
     return jsonify(papers)
 
 
 @app.route("/api/papers/<int:doc_id>")
 def api_paper(doc_id):
-    conn = db.get_connection()
-    paper = db.get_paper(conn, doc_id)
-    conn.close()
+    with db.connect() as conn:
+        paper = db.get_paper(conn, doc_id)
     if paper is None:
         return jsonify({"error": "Not found"}), 404
     return jsonify(paper)
@@ -66,9 +63,8 @@ def api_paper(doc_id):
 
 @app.route("/api/exclusion-codes")
 def api_exclusion_codes():
-    conn = db.get_connection()
-    codes = db.get_exclusion_codes(conn)
-    conn.close()
+    with db.connect() as conn:
+        codes = db.get_exclusion_codes(conn)
     return jsonify(codes)
 
 
@@ -86,18 +82,16 @@ def api_upload_pdf(doc_id):
     pdf_path = PDF_DIR / pdf_filename
     file.save(pdf_path)
 
-    conn = db.get_connection()
-    db.save_pdf_reference(conn, doc_id, pdf_filename)
-    conn.close()
+    with db.connect() as conn:
+        db.save_pdf_reference(conn, doc_id, pdf_filename)
 
     return jsonify({"success": True, "pdf_path": pdf_filename})
 
 
 @app.route("/api/papers/<int:doc_id>/pdf")
 def api_serve_pdf(doc_id):
-    conn = db.get_connection()
-    pdf_path = db.get_pdf_path(conn, doc_id)
-    conn.close()
+    with db.connect() as conn:
+        pdf_path = db.get_pdf_path(conn, doc_id)
     if pdf_path is None:
         return jsonify({"error": "No PDF"}), 404
     full_path = PDF_DIR / pdf_path
@@ -121,9 +115,8 @@ def api_save_review(doc_id):
     if decision not in ("include", "exclude", "uncertain"):
         return jsonify({"error": "Invalid decision"}), 400
 
-    conn = db.get_connection()
-    db.save_phase3_review(conn, doc_id, decision, notes, exclusion_code_ids)
-    conn.close()
+    with db.connect() as conn:
+        db.save_phase3_review(conn, doc_id, decision, notes, exclusion_code_ids)
     return jsonify({"success": True})
 
 
@@ -131,9 +124,8 @@ def api_save_review(doc_id):
 
 @app.route("/api/codes")
 def api_codes():
-    conn = db.get_connection()
-    codes = db.get_codes(conn)
-    conn.close()
+    with db.connect() as conn:
+        codes = db.get_codes(conn)
     return jsonify(codes)
 
 
@@ -142,26 +134,23 @@ def api_create_code():
     data = request.get_json()
     if not data or not data.get("name"):
         return jsonify({"error": "name required"}), 400
-    conn = db.get_connection()
-    try:
-        code = db.create_code(
-            conn, data["name"], data.get("parent_id"),
-            data.get("description", ""), data.get("color", "#FFEB3B"),
-            data.get("sort_order", 0),
-        )
-    except Exception as e:
-        conn.close()
-        return jsonify({"error": str(e)}), 400
-    conn.close()
+    with db.connect() as conn:
+        try:
+            code = db.create_code(
+                conn, data["name"], data.get("parent_id"),
+                data.get("description", ""), data.get("color", "#FFEB3B"),
+                data.get("sort_order", 0),
+            )
+        except Exception as e:
+            return jsonify({"error": str(e)}), 400
     return jsonify(code), 201
 
 
 @app.route("/api/codes/<int:code_id>", methods=["PUT"])
 def api_update_code(code_id):
     data = request.get_json()
-    conn = db.get_connection()
-    code = db.update_code(conn, code_id, **data)
-    conn.close()
+    with db.connect() as conn:
+        code = db.update_code(conn, code_id, **data)
     if code is None:
         return jsonify({"error": "Not found or no changes"}), 404
     return jsonify(code)
@@ -169,9 +158,8 @@ def api_update_code(code_id):
 
 @app.route("/api/codes/<int:code_id>", methods=["DELETE"])
 def api_delete_code(code_id):
-    conn = db.get_connection()
-    ok = db.delete_code(conn, code_id)
-    conn.close()
+    with db.connect() as conn:
+        ok = db.delete_code(conn, code_id)
     if not ok:
         return jsonify({"error": "Code has annotations or sub-codes"}), 400
     return jsonify({"success": True})
@@ -181,9 +169,8 @@ def api_delete_code(code_id):
 
 @app.route("/api/papers/<int:doc_id>/annotations")
 def api_annotations(doc_id):
-    conn = db.get_connection()
-    annotations = db.get_annotations(conn, doc_id)
-    conn.close()
+    with db.connect() as conn:
+        annotations = db.get_annotations(conn, doc_id)
     return jsonify(annotations)
 
 
@@ -192,23 +179,21 @@ def api_create_annotation(doc_id):
     data = request.get_json()
     if not data or not data.get("rects_json"):
         return jsonify({"error": "rects_json required"}), 400
-    conn = db.get_connection()
-    ann = db.create_annotation(
-        conn, doc_id, data.get("annotation_type", "highlight"),
-        data.get("page_number", 1), data["rects_json"],
-        data.get("selected_text"), data.get("note"), data.get("color"),
-        data.get("code_ids"),
-    )
-    conn.close()
+    with db.connect() as conn:
+        ann = db.create_annotation(
+            conn, doc_id, data.get("annotation_type", "highlight"),
+            data.get("page_number", 1), data["rects_json"],
+            data.get("selected_text"), data.get("note"), data.get("color"),
+            data.get("code_ids"),
+        )
     return jsonify(ann), 201
 
 
 @app.route("/api/annotations/<int:ann_id>", methods=["PUT"])
 def api_update_annotation(ann_id):
     data = request.get_json()
-    conn = db.get_connection()
-    ann = db.update_annotation(conn, ann_id, **data)
-    conn.close()
+    with db.connect() as conn:
+        ann = db.update_annotation(conn, ann_id, **data)
     if ann is None:
         return jsonify({"error": "Not found"}), 404
     return jsonify(ann)
@@ -216,9 +201,8 @@ def api_update_annotation(ann_id):
 
 @app.route("/api/annotations/<int:ann_id>", methods=["DELETE"])
 def api_delete_annotation(ann_id):
-    conn = db.get_connection()
-    ok = db.delete_annotation(conn, ann_id)
-    conn.close()
+    with db.connect() as conn:
+        ok = db.delete_annotation(conn, ann_id)
     if not ok:
         return jsonify({"error": "Not found"}), 404
     return jsonify({"success": True})
@@ -227,9 +211,8 @@ def api_delete_annotation(ann_id):
 @app.route("/api/annotations/<int:ann_id>/codes/<int:code_id>", methods=["POST"])
 def api_add_annotation_code(ann_id, code_id):
     data = request.get_json(silent=True) or {}
-    conn = db.get_connection()
-    db.add_annotation_code(conn, ann_id, code_id, data.get("note"))
-    conn.close()
+    with db.connect() as conn:
+        db.add_annotation_code(conn, ann_id, code_id, data.get("note"))
     return jsonify({"success": True})
 
 
@@ -238,57 +221,126 @@ def api_update_annotation_code_note(ann_id, code_id):
     data = request.get_json()
     if not data:
         return jsonify({"error": "No data"}), 400
-    conn = db.get_connection()
-    db.update_annotation_code_note(conn, ann_id, code_id, data.get("note", ""))
-    conn.close()
+    with db.connect() as conn:
+        db.update_annotation_code_note(conn, ann_id, code_id, data.get("note", ""))
     return jsonify({"success": True})
 
 
 @app.route("/api/annotations/<int:ann_id>/codes/<int:code_id>", methods=["DELETE"])
 def api_remove_annotation_code(ann_id, code_id):
-    conn = db.get_connection()
-    db.remove_annotation_code(conn, ann_id, code_id)
-    conn.close()
+    with db.connect() as conn:
+        db.remove_annotation_code(conn, ann_id, code_id)
     return jsonify({"success": True})
 
 
 @app.route("/api/codes/usage")
 def api_code_usage_counts():
-    conn = db.get_connection()
-    counts = db.get_code_usage_counts(conn)
-    conn.close()
+    with db.connect() as conn:
+        counts = db.get_code_usage_counts(conn)
     return jsonify(counts)
 
 
-# --- API: Matrix ---
+# --- API: Matrix Columns ---
+
+@app.route("/api/matrix-columns")
+def api_matrix_columns():
+    with db.connect() as conn:
+        columns = db.get_matrix_columns(conn)
+    return jsonify(columns)
+
+
+@app.route("/api/matrix-columns", methods=["POST"])
+def api_create_matrix_column():
+    data = request.get_json()
+    if not data or not data.get("name") or not data.get("column_type"):
+        return jsonify({"error": "name and column_type required"}), 400
+    with db.connect() as conn:
+        col = db.create_matrix_column(
+            conn, data["name"], data["column_type"],
+            data.get("description", ""), data.get("color", "#FFEB3B"),
+            data.get("sort_order", 0),
+        )
+    return jsonify(col), 201
+
+
+@app.route("/api/matrix-columns/<int:col_id>", methods=["PUT"])
+def api_update_matrix_column(col_id):
+    data = request.get_json()
+    with db.connect() as conn:
+        col = db.update_matrix_column(conn, col_id, **data)
+    if col is None:
+        return jsonify({"error": "Not found or no changes"}), 404
+    return jsonify(col)
+
+
+@app.route("/api/matrix-columns/<int:col_id>", methods=["DELETE"])
+def api_delete_matrix_column(col_id):
+    with db.connect() as conn:
+        ok = db.delete_matrix_column(conn, col_id)
+    if not ok:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify({"success": True})
+
+
+@app.route("/api/matrix-columns/<int:col_id>/options", methods=["POST"])
+def api_create_column_option(col_id):
+    data = request.get_json()
+    if not data or not data.get("value"):
+        return jsonify({"error": "value required"}), 400
+    with db.connect() as conn:
+        opt = db.create_column_option(conn, col_id, data["value"], data.get("sort_order", 0))
+    return jsonify(opt), 201
+
+
+@app.route("/api/matrix-column-options/<int:opt_id>", methods=["DELETE"])
+def api_delete_column_option(opt_id):
+    with db.connect() as conn:
+        ok = db.delete_column_option(conn, opt_id)
+    if not ok:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify({"success": True})
+
+
+@app.route("/api/matrix-columns/<int:col_id>/codes/<int:code_id>", methods=["POST"])
+def api_link_column_code(col_id, code_id):
+    with db.connect() as conn:
+        db.link_column_code(conn, col_id, code_id)
+    return jsonify({"success": True})
+
+
+@app.route("/api/matrix-columns/<int:col_id>/codes/<int:code_id>", methods=["DELETE"])
+def api_unlink_column_code(col_id, code_id):
+    with db.connect() as conn:
+        db.unlink_column_code(conn, col_id, code_id)
+    return jsonify({"success": True})
+
+
+# --- API: Matrix Data ---
 
 @app.route("/api/matrix")
 def api_matrix():
-    conn = db.get_connection()
-    matrix = db.get_matrix(conn)
-    conn.close()
+    with db.connect() as conn:
+        matrix = db.get_matrix(conn)
     return jsonify(matrix)
 
 
 @app.route("/api/papers/<int:doc_id>/matrix-cells")
 def api_paper_matrix_cells(doc_id):
-    conn = db.get_connection()
-    cells = db.get_paper_matrix_cells(conn, doc_id)
-    conn.close()
+    with db.connect() as conn:
+        cells = db.get_paper_matrix_cells(conn, doc_id)
     return jsonify(cells)
 
 
 @app.route("/api/matrix/cell", methods=["POST"])
 def api_save_matrix_cell():
     data = request.get_json()
-    if not data or not data.get("document_id") or not data.get("code_id"):
-        return jsonify({"error": "document_id and code_id required"}), 400
-    conn = db.get_connection()
-    cell = db.save_matrix_cell(
-        conn, data["document_id"], data["code_id"],
-        data.get("value"), data.get("notes"),
-    )
-    conn.close()
+    if not data or not data.get("document_id") or not data.get("column_id"):
+        return jsonify({"error": "document_id and column_id required"}), 400
+    with db.connect() as conn:
+        cell = db.save_matrix_cell(
+            conn, data["document_id"], data["column_id"],
+            data.get("value"), data.get("notes"),
+        )
     return jsonify(cell)
 
 
@@ -296,19 +348,33 @@ def api_save_matrix_cell():
 
 @app.route("/api/coding/completeness")
 def api_coding_completeness():
-    conn = db.get_connection()
-    completeness = db.get_coding_completeness(conn)
-    conn.close()
+    with db.connect() as conn:
+        completeness = db.get_coding_completeness(conn)
     return jsonify(completeness)
+
+
+# --- API: Themes & Summary ---
+
+@app.route("/api/themes/<int:code_id>")
+def api_themes(code_id):
+    with db.connect() as conn:
+        annotations = db.get_annotations_by_code(conn, code_id)
+    return jsonify(annotations)
+
+
+@app.route("/api/papers/<int:doc_id>/summary")
+def api_paper_summary(doc_id):
+    with db.connect() as conn:
+        summary = db.get_paper_annotation_summary(conn, doc_id)
+    return jsonify(summary)
 
 
 # --- API: Stats ---
 
 @app.route("/api/stats")
 def api_stats():
-    conn = db.get_connection()
-    stats = db.get_stats(conn)
-    conn.close()
+    with db.connect() as conn:
+        stats = db.get_stats(conn)
     return jsonify(stats)
 
 
@@ -318,10 +384,29 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5001)
+    parser.add_argument("--desktop", action="store_true", help="Launch as desktop app (pywebview)")
     args = parser.parse_args()
 
     init_db()
-    app.run(host=args.host, port=args.port, debug=True)
+
+    if args.desktop:
+        import threading
+        import webview
+
+        server = threading.Thread(
+            target=lambda: app.run(host="127.0.0.1", port=args.port, debug=False),
+            daemon=True,
+        )
+        server.start()
+        webview.create_window(
+            "Lit Review Coding",
+            f"http://127.0.0.1:{args.port}",
+            width=1400,
+            height=900,
+        )
+        webview.start()
+    else:
+        app.run(host=args.host, port=args.port, debug=True)
 
 
 if __name__ == "__main__":

@@ -23,10 +23,7 @@
 }
 
 /* PDF mode cursors */
-body.mode-hand .textLayer {
-    pointer-events: none !important;
-}
-
+body.mode-hand .textLayer,
 body.mode-box .textLayer {
     pointer-events: none !important;
 }
@@ -103,13 +100,6 @@ body.resizing {
     position: absolute;
     pointer-events: none;
     border-radius: 2px;
-    transition: opacity 0.15s;
-}
-
-.pdf-highlight:hover,
-.pdf-area:hover {
-    opacity: 0.8;
-    outline: 1px solid currentColor;
 }
 
 .pdf-area {
@@ -126,10 +116,3 @@ body.resizing {
     z-index: 10;
 }
 
-/* Line clamp utility */
-.line-clamp-2 {
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-}

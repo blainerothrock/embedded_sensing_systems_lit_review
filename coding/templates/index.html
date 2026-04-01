@@ -24,6 +24,8 @@
                     @click="view = 'papers'">Papers</button>
                 <button class="btn btn-xs" :class="view === 'matrix' ? 'btn-primary' : 'btn-ghost'"
                     @click="view = 'matrix'; loadMatrix()">Matrix</button>
+                <button class="btn btn-xs" :class="view === 'themes' ? 'btn-primary' : 'btn-ghost'"
+                    @click="view = 'themes'; if (!selectedThemeCodeId && codes.length) loadThemes(codes[0].id)">Themes</button>
             </div>
             <!-- Paper navigation -->
             <div class="flex items-center gap-1 ml-2" x-show="view === 'papers' && papers.length > 0">
@@ -40,8 +42,12 @@
         </div>
         <div class="flex-none gap-3 flex items-center">
             <button class="btn btn-xs btn-ghost gap-1" @click="showCodeManager = true; loadCodes(); loadCodeUsageCounts()">
-                <svg class="w-4 h-4"><use href="{{icon}}#icon-plus"/></svg>
+                <svg class="w-4 h-4"><use href="{{icon}}#icon-tag"/></svg>
                 Codes
+            </button>
+            <button class="btn btn-xs btn-ghost gap-1" @click="showColumnEditor = true; loadMatrixColumns()">
+                <svg class="w-4 h-4"><use href="{{icon}}#icon-plus"/></svg>
+                Columns
             </button>
             <div class="text-sm opacity-70" x-show="stats">
                 <span x-text="stats?.reviewed"></span>/<span x-text="stats?.total"></span> reviewed
@@ -84,6 +90,7 @@
                     <template x-for="paper in papers" :key="paper.id">
                         <li>
                             <a @click="selectPaper(paper.id)"
+                               :data-paper-id="paper.id"
                                :class="{'active': selectedPaperId === paper.id}"
                                class="flex flex-col items-start gap-0.5 py-1.5">
                                 <span class="text-sm leading-tight line-clamp-2" x-text="paper.title || 'Untitled'"></span>
@@ -281,6 +288,11 @@
                    @click="rightTab = 'annotations'; loadPaperAnnotations(); selectedAnnotation = null">
                     <svg class="w-3.5 h-3.5"><use href="{{icon}}#icon-chat-bubble-left"/></svg>
                     Annotations
+                </a>
+                <a class="tab tab-sm gap-1" :class="{'tab-active': rightTab === 'summary'}"
+                   @click="rightTab = 'summary'; loadPaperSummary()">
+                    <svg class="w-3.5 h-3.5"><use href="{{icon}}#icon-document"/></svg>
+                    Summary
                 </a>
                 <a class="tab tab-sm gap-1" :class="{'tab-active': rightTab === 'matrix'}"
                    @click="rightTab = 'matrix'; loadPaperMatrixCells()">
@@ -522,43 +534,92 @@
                 </div>
             </div>
 
-            <!-- Matrix Tab -->
-            <div class="flex-1 overflow-y-auto p-3 space-y-2" x-show="rightTab === 'matrix'">
-                <template x-for="code in codes" :key="'mt-'+code.id">
+            <!-- Summary Tab -->
+            <div class="flex-1 overflow-y-auto p-3 space-y-2" x-show="rightTab === 'summary'">
+                <template x-for="group in paperSummary" :key="'sum-'+group.code.id">
                     <div class="collapse collapse-arrow bg-base-300 rounded-lg">
                         <input type="checkbox" checked>
                         <div class="collapse-title py-2 px-3 min-h-0 flex items-center gap-2 text-sm">
                             <div class="w-3 h-3 rounded-full flex-shrink-0"
-                                 :style="'background:' + code.color"></div>
-                            <span class="font-semibold flex-1" x-text="code.name"></span>
+                                 :style="'background:' + group.code.color"></div>
+                            <span class="font-semibold flex-1" x-text="group.code.name"></span>
+                            <span class="badge badge-xs badge-ghost" x-text="group.annotations.length"></span>
+                        </div>
+                        <div class="collapse-content px-3 pb-3 space-y-1">
+                            <template x-for="ann in group.annotations" :key="'sa-'+ann.id">
+                                <div class="p-1.5 bg-base-200 rounded text-xs cursor-pointer hover:bg-base-100 transition-colors"
+                                     @click="annotationReturnTab = 'summary'; openAnnotationDetail(ann); rightTab = 'annotations'">
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="badge badge-xs badge-ghost flex-shrink-0">p.<span x-text="ann.page_number"></span></span>
+                                        <p class="flex-1 italic opacity-80 line-clamp-2"
+                                           x-text="ann.selected_text || ann.note || '(area)'"></p>
+                                    </div>
+                                    <div class="flex flex-wrap gap-1 mt-1">
+                                        <template x-for="c in ann.codes" :key="'sc-'+c.id">
+                                            <span class="badge badge-xs"
+                                                  :style="'background:' + c.color + '33; color:' + c.color + '; border-color:' + c.color"
+                                                  x-text="c.name"></span>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+                <div x-show="paperSummary.length === 0" class="text-sm opacity-50 text-center py-4">
+                    No annotations for this paper yet.
+                </div>
+            </div>
+
+            <!-- Matrix Tab -->
+            <div class="flex-1 overflow-y-auto p-3 space-y-2" x-show="rightTab === 'matrix'">
+                <template x-for="col in matrixColumns" :key="'mt-'+col.id">
+                    <div class="collapse collapse-arrow bg-base-300 rounded-lg">
+                        <input type="checkbox" checked>
+                        <div class="collapse-title py-2 px-3 min-h-0 flex items-center gap-2 text-sm">
+                            <div class="w-3 h-3 rounded-full flex-shrink-0"
+                                 :style="'background:' + col.color"></div>
+                            <span class="font-semibold flex-1" x-text="col.name"></span>
                             <span class="badge badge-xs badge-ghost"
-                                  x-show="getEvidenceForCode(code).length > 0"
-                                  x-text="getEvidenceForCode(code).length + ' ev.'"></span>
+                                  x-show="getEvidenceForColumn(col).length > 0"
+                                  x-text="getEvidenceForColumn(col).length + ' ev.'"></span>
                         </div>
                         <div class="collapse-content px-3 pb-3 space-y-2">
-                            <!-- Cell editor: dropdown if sub-codes, text if not -->
-                            <template x-if="code.children.length > 0">
+                            <!-- Cell editor by column type -->
+                            <template x-if="col.column_type === 'enum_single'">
                                 <select class="select select-sm w-full"
-                                    :value="paperMatrixCells[code.id]?.value || ''"
-                                    @change="savePaperMatrixCell(code.id, $event.target.value)">
+                                    :value="paperMatrixCells[col.id]?.value || ''"
+                                    @change="savePaperMatrixCell(col.id, $event.target.value)">
                                     <option value="">-- select --</option>
-                                    <template x-for="sub in code.children" :key="'ms-'+sub.id">
-                                        <option :value="sub.name" x-text="sub.name"></option>
+                                    <template x-for="opt in col.options" :key="'mo-'+opt.id">
+                                        <option :value="opt.value" x-text="opt.value"></option>
                                     </template>
                                 </select>
                             </template>
-                            <template x-if="code.children.length === 0">
+                            <template x-if="col.column_type === 'enum_multi'">
+                                <div class="space-y-1">
+                                    <template x-for="opt in col.options" :key="'mm-'+opt.id">
+                                        <label class="flex items-center gap-2 cursor-pointer text-sm">
+                                            <input type="checkbox" class="checkbox checkbox-xs"
+                                                :checked="parseMultiValue(paperMatrixCells[col.id]?.value).includes(opt.value)"
+                                                @change="toggleMultiValue(col.id, opt.value, 'paper')">
+                                            <span x-text="opt.value"></span>
+                                        </label>
+                                    </template>
+                                </div>
+                            </template>
+                            <template x-if="col.column_type === 'text'">
                                 <input type="text" class="input input-sm w-full"
                                     placeholder="Enter value..."
-                                    :value="paperMatrixCells[code.id]?.value || ''"
-                                    @change="savePaperMatrixCell(code.id, $event.target.value)">
+                                    :value="paperMatrixCells[col.id]?.value || ''"
+                                    @change="savePaperMatrixCell(col.id, $event.target.value)">
                             </template>
 
-                            <!-- Supporting annotations -->
-                            <template x-if="getEvidenceForCode(code).length > 0">
+                            <!-- Evidence from linked codes -->
+                            <template x-if="getEvidenceForColumn(col).length > 0">
                                 <div class="space-y-1 mt-1">
                                     <label class="text-xs font-semibold uppercase opacity-60">Evidence</label>
-                                    <template x-for="ann in getEvidenceForCode(code)" :key="'me-'+ann.id">
+                                    <template x-for="ann in getEvidenceForColumn(col)" :key="'me-'+ann.id">
                                         <div class="p-1.5 bg-base-200 rounded text-xs cursor-pointer hover:bg-base-100 transition-colors"
                                              @click="annotationReturnTab = 'matrix'; openAnnotationDetail(ann); rightTab = 'annotations'">
                                             <div class="flex items-center gap-1.5">
@@ -566,24 +627,19 @@
                                                 <p class="flex-1 italic opacity-80 line-clamp-2"
                                                    x-text="ann.selected_text || ann.note || '(area)'"></p>
                                             </div>
-                                            <div class="flex flex-wrap gap-1 mt-1">
-                                                <template x-for="c in ann.codes.filter(c => c.id === code.id || c.parent_id === code.id)"
-                                                          :key="'mc-'+c.id">
-                                                    <span class="badge badge-xs"
-                                                          :style="'background:' + c.color + '33; color:' + c.color + '; border-color:' + c.color"
-                                                          x-text="c.name"></span>
-                                                </template>
-                                            </div>
                                         </div>
                                     </template>
                                 </div>
                             </template>
+                            <div x-show="col.linked_codes.length === 0" class="text-xs opacity-40 mt-1">
+                                No codes linked — open Column editor to link codes for evidence tracking.
+                            </div>
                         </div>
                     </div>
                 </template>
 
-                <div x-show="codes.length === 0" class="text-sm opacity-50 text-center py-4">
-                    No codes defined yet. Open the Code Builder to create codes.
+                <div x-show="matrixColumns.length === 0" class="text-sm opacity-50 text-center py-4">
+                    No matrix columns defined. Click "Columns" in the toolbar to create some.
                 </div>
             </div>
 
@@ -653,13 +709,12 @@
                         <tr>
                             <th class="bg-base-200 z-20">Paper</th>
                             <th class="bg-base-200">Year</th>
-                            <template x-for="code in matrixData.codes" :key="'h-'+code.id">
+                            <template x-for="col in matrixData.columns" :key="'h-'+col.id">
                                 <th class="bg-base-200 text-center min-w-28">
                                     <div class="flex flex-col items-center gap-0.5">
-                                        <div class="w-2 h-2 rounded-full" :style="'background:' + code.color"></div>
-                                        <span x-text="code.name"></span>
-                                        <span class="text-xs opacity-40" x-show="code.children.length > 0"
-                                            x-text="code.children.map(c => c.name).join(', ')"></span>
+                                        <div class="w-2 h-2 rounded-full" :style="'background:' + col.color"></div>
+                                        <span x-text="col.name"></span>
+                                        <span class="text-xs opacity-40" x-text="col.column_type.replace('_', ' ')"></span>
                                     </div>
                                 </th>
                             </template>
@@ -672,30 +727,39 @@
                                     @click="view = 'papers'; selectPaper(paper.id)"
                                     x-text="paper.title"></td>
                                 <td class="bg-base-200" x-text="paper.year"></td>
-                                <template x-for="code in matrixData.codes" :key="'c-'+code.id+'-'+paper.id">
+                                <template x-for="col in matrixData.columns" :key="'c-'+col.id+'-'+paper.id">
                                     <td class="text-center p-1" @click.stop>
-                                        <!-- Select dropdown if code has sub-codes -->
-                                        <template x-if="code.children.length > 0">
+                                        <template x-if="col.column_type === 'enum_single'">
                                             <select class="select select-xs w-full max-w-28"
-                                                :value="matrixData.cells[paper.id]?.[code.id]?.value || ''"
-                                                @change="saveMatrixCell(paper.id, code.id, $event.target.value)">
+                                                :value="matrixData.cells[paper.id]?.[col.id]?.value || ''"
+                                                @change="saveMatrixCell(paper.id, col.id, $event.target.value)">
                                                 <option value="">—</option>
-                                                <template x-for="sub in code.children" :key="sub.id">
-                                                    <option :value="sub.name" x-text="sub.name"></option>
+                                                <template x-for="opt in col.options" :key="opt.id">
+                                                    <option :value="opt.value" x-text="opt.value"></option>
                                                 </template>
                                             </select>
                                         </template>
-                                        <!-- Free text if no sub-codes -->
-                                        <template x-if="code.children.length === 0">
+                                        <template x-if="col.column_type === 'enum_multi'">
+                                            <div class="text-xs text-left">
+                                                <template x-for="opt in col.options" :key="'mx-'+opt.id">
+                                                    <label class="flex items-center gap-1 cursor-pointer">
+                                                        <input type="checkbox" class="checkbox checkbox-xs"
+                                                            :checked="parseMultiValue(matrixData.cells[paper.id]?.[col.id]?.value).includes(opt.value)"
+                                                            @change="saveMatrixCell(paper.id, col.id, (() => { let v = parseMultiValue(matrixData.cells[paper.id]?.[col.id]?.value); const i = v.indexOf(opt.value); if (i>=0) v.splice(i,1); else v.push(opt.value); return JSON.stringify(v); })())">
+                                                        <span x-text="opt.value"></span>
+                                                    </label>
+                                                </template>
+                                            </div>
+                                        </template>
+                                        <template x-if="col.column_type === 'text'">
                                             <input type="text" class="input input-xs w-full max-w-28 text-center"
                                                 placeholder="—"
-                                                :value="matrixData.cells[paper.id]?.[code.id]?.value || ''"
-                                                @change="saveMatrixCell(paper.id, code.id, $event.target.value)">
+                                                :value="matrixData.cells[paper.id]?.[col.id]?.value || ''"
+                                                @change="saveMatrixCell(paper.id, col.id, $event.target.value)">
                                         </template>
-                                        <!-- Evidence count badge -->
                                         <span class="badge badge-xs badge-ghost mt-0.5"
-                                            x-show="matrixData.evidence[paper.id]?.[code.id]"
-                                            x-text="(matrixData.evidence[paper.id]?.[code.id] || 0) + ' ann.'"></span>
+                                            x-show="matrixData.evidence[paper.id]?.[col.id]"
+                                            x-text="(matrixData.evidence[paper.id]?.[col.id] || 0) + ' ann.'"></span>
                                     </td>
                                 </template>
                             </tr>
@@ -706,6 +770,187 @@
         </template>
         <div x-show="!matrixData" class="text-center py-12 opacity-50">Loading matrix...</div>
     </div>
+
+    <!-- ==================== THEMES VIEW ==================== -->
+    <div class="flex h-[calc(100vh-3rem)]" x-show="view === 'themes'">
+        <!-- Left: code tree -->
+        <div class="w-72 bg-base-200 border-r border-base-300 flex flex-col overflow-hidden">
+            <div class="p-2 border-b border-base-300">
+                <p class="text-sm font-semibold opacity-70">Codes</p>
+            </div>
+            <div class="flex-1 overflow-y-auto">
+                <ul class="menu menu-sm p-1">
+                    <template x-for="code in codes" :key="'tc-'+code.id">
+                        <li>
+                            <a @click="loadThemes(code.id)"
+                               :class="{'active': selectedThemeCodeId === code.id}"
+                               class="flex items-center gap-2">
+                                <div class="w-2.5 h-2.5 rounded-full flex-shrink-0" :style="'background:' + code.color"></div>
+                                <span class="flex-1 text-sm" x-text="code.name"></span>
+                                <span class="badge badge-xs badge-ghost" x-text="codeUsageCounts[code.id] || 0"></span>
+                            </a>
+                            <template x-if="code.children?.length > 0">
+                                <ul>
+                                    <template x-for="sub in code.children" :key="'ts-'+sub.id">
+                                        <li>
+                                            <a @click="loadThemes(sub.id)"
+                                               :class="{'active': selectedThemeCodeId === sub.id}"
+                                               class="flex items-center gap-2">
+                                                <div class="w-2 h-2 rounded-full flex-shrink-0" :style="'background:' + sub.color"></div>
+                                                <span class="flex-1 text-sm" x-text="sub.name"></span>
+                                                <span class="badge badge-xs badge-ghost" x-text="codeUsageCounts[sub.id] || 0"></span>
+                                            </a>
+                                        </li>
+                                    </template>
+                                </ul>
+                            </template>
+                        </li>
+                    </template>
+                </ul>
+            </div>
+        </div>
+        <!-- Right: annotations for selected code -->
+        <div class="flex-1 overflow-y-auto p-4">
+            <div x-show="!selectedThemeCodeId" class="text-center py-12 opacity-50">
+                Select a code to view annotations across all papers.
+            </div>
+            <div x-show="selectedThemeCodeId">
+                <h2 class="text-lg font-semibold mb-3">
+                    <span x-text="themesAnnotations.length"></span> annotations
+                </h2>
+                <div class="space-y-3">
+                    <template x-for="ann in themesAnnotations" :key="'ta-'+ann.id">
+                        <div class="card bg-base-200 shadow-sm cursor-pointer hover:bg-base-300 transition-colors"
+                             @click="navigateToAnnotation(ann.document_id, ann.page_number)">
+                            <div class="card-body p-3 space-y-1.5">
+                                <div class="flex items-center gap-2 text-sm">
+                                    <span class="font-semibold flex-1 line-clamp-1" x-text="ann.paper_title"></span>
+                                    <span class="opacity-50" x-text="ann.paper_year"></span>
+                                    <span class="badge badge-xs badge-ghost">p.<span x-text="ann.page_number"></span></span>
+                                </div>
+                                <p class="text-sm italic opacity-80 leading-relaxed"
+                                   x-text="ann.selected_text || ann.note || '(area annotation)'"
+                                   x-show="ann.selected_text || ann.note"></p>
+                                <div class="flex flex-wrap gap-1">
+                                    <template x-for="c in ann.codes" :key="'tc2-'+c.id">
+                                        <span class="badge badge-xs"
+                                              :style="'background:' + c.color + '33; color:' + c.color + '; border-color:' + c.color"
+                                              x-text="c.name"></span>
+                                    </template>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+                <div x-show="themesAnnotations.length === 0" class="text-center py-8 opacity-50">
+                    No annotations tagged with this code yet.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== MATRIX COLUMN EDITOR MODAL ==================== -->
+    <dialog class="modal" :class="{'modal-open': showColumnEditor}">
+        <div class="modal-box max-w-3xl max-h-[85vh]">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-bold">Matrix Columns</h3>
+                <button class="btn btn-sm btn-ghost" @click="showColumnEditor = false">
+                    <svg class="w-5 h-5"><use href="{{icon}}#icon-x-mark"/></svg>
+                </button>
+            </div>
+
+            <!-- Create column -->
+            <div class="flex gap-2 mb-4">
+                <input type="text" class="input input-sm flex-1" placeholder="New column name..."
+                    x-model="newColumnName" @keydown.enter="createMatrixColumn()">
+                <select class="select select-sm" x-model="newColumnType">
+                    <option value="enum_single">Dropdown</option>
+                    <option value="enum_multi">Multi-select</option>
+                    <option value="text">Free text</option>
+                </select>
+                <button class="btn btn-sm btn-primary" @click="createMatrixColumn()" :disabled="!newColumnName.trim()">
+                    <svg class="w-4 h-4"><use href="{{icon}}#icon-plus"/></svg>
+                    Add
+                </button>
+            </div>
+
+            <!-- Column list -->
+            <div class="space-y-4 overflow-y-auto max-h-[60vh]">
+                <template x-for="(col, cIdx) in matrixColumns" :key="col.id">
+                    <div class="bg-base-200 rounded-lg p-3">
+                        <div class="flex items-center gap-2">
+                            <input type="color" class="w-5 h-5 cursor-pointer rounded border-0 flex-shrink-0"
+                                :value="col.color"
+                                @change="updateMatrixColumn(col.id, {color: $event.target.value})">
+                            <input type="text" class="input input-sm input-ghost font-semibold flex-1 px-1"
+                                :value="col.name"
+                                @change="updateMatrixColumn(col.id, {name: $event.target.value})">
+                            <span class="badge badge-xs badge-ghost flex-shrink-0" x-text="col.column_type.replace('_', ' ')"></span>
+                            <button class="btn btn-xs btn-ghost" @click="updateMatrixColumn(col.id, {sort_order: cIdx - 1}); loadMatrixColumns()" :disabled="cIdx === 0">↑</button>
+                            <button class="btn btn-xs btn-ghost" @click="updateMatrixColumn(col.id, {sort_order: cIdx + 1}); loadMatrixColumns()" :disabled="cIdx === matrixColumns.length - 1">↓</button>
+                            <button class="btn btn-xs btn-ghost btn-error flex-shrink-0"
+                                @click="deleteMatrixColumn(col.id)">
+                                <svg class="w-3 h-3"><use href="{{icon}}#icon-x-mark"/></svg>
+                            </button>
+                        </div>
+
+                        <!-- Options (for enum types) -->
+                        <div class="mt-2 ml-7" x-show="col.column_type !== 'text'">
+                            <label class="text-xs font-semibold uppercase opacity-60">Options</label>
+                            <div class="space-y-1 mt-1">
+                                <template x-for="opt in col.options" :key="opt.id">
+                                    <div class="flex items-center gap-2 text-sm">
+                                        <span class="flex-1" x-text="opt.value"></span>
+                                        <button class="btn btn-xs btn-ghost btn-error" @click="deleteColumnOption(opt.id)">
+                                            <svg class="w-3 h-3"><use href="{{icon}}#icon-x-mark"/></svg>
+                                        </button>
+                                    </div>
+                                </template>
+                            </div>
+                            <div class="flex gap-2 mt-1">
+                                <input type="text" class="input input-xs flex-1" placeholder="New option..."
+                                    x-model="newOptionValues[col.id]"
+                                    @keydown.enter="addColumnOption(col.id)">
+                                <button class="btn btn-xs btn-ghost" @click="addColumnOption(col.id)"
+                                    :disabled="!newOptionValues[col.id]?.trim()">
+                                    <svg class="w-3 h-3"><use href="{{icon}}#icon-plus"/></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Linked codes -->
+                        <div class="mt-2 ml-7">
+                            <label class="text-xs font-semibold uppercase opacity-60">Linked Codes (for evidence)</label>
+                            <div class="space-y-1 mt-1">
+                                <template x-for="lc in col.linked_codes" :key="'lc-'+lc.id">
+                                    <div class="flex items-center gap-2 text-sm">
+                                        <div class="w-2 h-2 rounded-full flex-shrink-0" :style="'background:' + lc.color"></div>
+                                        <span class="flex-1" x-text="lc.name"></span>
+                                        <button class="btn btn-xs btn-ghost btn-error" @click="unlinkColumnCode(col.id, lc.id)">
+                                            <svg class="w-3 h-3"><use href="{{icon}}#icon-x-mark"/></svg>
+                                        </button>
+                                    </div>
+                                </template>
+                            </div>
+                            <!-- Code picker for linking -->
+                            <div class="mt-1">
+                                <select class="select select-xs w-full"
+                                    @change="if ($event.target.value) { linkColumnCode(col.id, parseInt($event.target.value)); $event.target.value = ''; }">
+                                    <option value="">+ Link a code...</option>
+                                    <template x-for="code in allCodesFlat.filter(c => !col.linked_codes.some(lc => lc.id === c.id))" :key="'link-'+code.id">
+                                        <option :value="code.id" x-text="(code.parent_id ? '  └ ' : '') + code.name"></option>
+                                    </template>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button @click="showColumnEditor = false">close</button>
+        </form>
+    </dialog>
 
     <!-- ==================== CODE BUILDER MODAL ==================== -->
     <dialog class="modal" :class="{'modal-open': showCodeManager}">
@@ -741,7 +986,6 @@
                                 @change="updateCode(code.id, {name: $event.target.value})">
                             <span class="badge badge-xs opacity-50 flex-shrink-0"
                                 x-text="(codeUsageCounts[code.id] || 0) + ' ann.'"></span>
-                            <span class="badge badge-xs badge-ghost flex-shrink-0">matrix col</span>
                             <!-- Reorder -->
                             <button class="btn btn-xs btn-ghost" @click="reorderCode(code.id, -1)" :disabled="cIdx === 0" title="Move up">↑</button>
                             <button class="btn btn-xs btn-ghost" @click="reorderCode(code.id, 1)" :disabled="cIdx === codes.length - 1" title="Move down">↓</button>
@@ -781,8 +1025,6 @@
                                     </button>
                                 </div>
                             </template>
-                            <p class="text-xs opacity-40" x-show="code.children.length > 0">Sub-codes = dropdown options in the matrix</p>
-                            <p class="text-xs opacity-40" x-show="code.children.length === 0">No sub-codes = free text in the matrix</p>
                         </div>
 
                         <!-- Add sub-code -->
@@ -806,10 +1048,12 @@
     </dialog>
 
     <!-- Toast notifications -->
-    <div class="toast toast-end toast-bottom" x-show="toast" x-transition>
-        <div class="alert" :class="'alert-' + toastType">
-            <span x-text="toast"></span>
-        </div>
+    <div class="toast toast-end toast-bottom">
+        <template x-for="t in toasts" :key="t.id">
+            <div class="alert" :class="'alert-' + t.type" x-transition>
+                <span x-text="t.msg"></span>
+            </div>
+        </template>
     </div>
 
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>

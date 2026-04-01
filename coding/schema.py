@@ -13,6 +13,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     _create_document_pdf(conn)
     _create_coding_tables(conn)
     _migrate_annotation_code_note(conn)
+    _create_matrix_column_tables(conn)
     conn.commit()
 
 
@@ -179,6 +180,74 @@ def _create_coding_tables(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_annotation_code_code ON annotation_code(code_id)"
     )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_matrix_cell_document ON matrix_cell(document_id)"
+    )
+
+
+def _create_matrix_column_tables(conn: sqlite3.Connection) -> None:
+    """Decouple matrix columns from codes.
+
+    Matrix columns are now independent entities with typed inputs.
+    They can optionally link to codes for evidence tracking.
+    """
+    # Check if migration already done (matrix_column table exists)
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='matrix_column'"
+    ).fetchone()
+    if row is not None:
+        return  # already migrated
+
+    # Create matrix column definition table
+    conn.execute("""
+        CREATE TABLE matrix_column (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            column_type TEXT NOT NULL CHECK(column_type IN ('enum_single', 'enum_multi', 'text')),
+            sort_order INTEGER DEFAULT 0,
+            color TEXT DEFAULT '#FFEB3B',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Enum options for matrix columns
+    conn.execute("""
+        CREATE TABLE matrix_column_option (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            column_id INTEGER NOT NULL,
+            value TEXT NOT NULL,
+            sort_order INTEGER DEFAULT 0,
+            FOREIGN KEY (column_id) REFERENCES matrix_column(id) ON DELETE CASCADE
+        )
+    """)
+
+    # Link matrix columns to codes for evidence tracking
+    conn.execute("""
+        CREATE TABLE matrix_column_code (
+            column_id INTEGER NOT NULL,
+            code_id INTEGER NOT NULL,
+            PRIMARY KEY (column_id, code_id),
+            FOREIGN KEY (column_id) REFERENCES matrix_column(id) ON DELETE CASCADE,
+            FOREIGN KEY (code_id) REFERENCES code(id) ON DELETE CASCADE
+        )
+    """)
+
+    # Drop old matrix_cell (uses code_id) and create new one (uses column_id)
+    conn.execute("DROP TABLE IF EXISTS matrix_cell")
+    conn.execute("""
+        CREATE TABLE matrix_cell (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id INTEGER NOT NULL,
+            column_id INTEGER NOT NULL,
+            value TEXT,
+            notes TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (document_id) REFERENCES document(id),
+            FOREIGN KEY (column_id) REFERENCES matrix_column(id),
+            UNIQUE(document_id, column_id)
+        )
+    """)
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_matrix_cell_document ON matrix_cell(document_id)"
     )

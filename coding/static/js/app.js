@@ -8,6 +8,8 @@ let _pageViewports = {};
 let _zoomRenderTimer = null;
 // Snapshot of scroll anchor before zoom sequence begins (reset after render)
 let _zoomAnchor = null;
+// Debounce timers for matrix cell saves
+let _matrixSaveTimers = {};
 
 async function ensurePdfJs() {
     if (pdfjsLib) return pdfjsLib;
@@ -29,7 +31,7 @@ document.addEventListener("alpine:init", () => {
         stats: null,
         rightTab: "details",
         dragOver: false,
-        view: "papers", // "papers" or "matrix"
+        view: "papers", // "papers" | "matrix" | "themes"
 
         // Theme
         theme: localStorage.getItem("theme") || "night",
@@ -65,8 +67,20 @@ document.addEventListener("alpine:init", () => {
         showCodeManager: false,
         newCodeName: "",
         newSubCodeNames: {},    // {parent_code_id: "name"}
+        matrixColumns: [],      // matrix column definitions with options and linked codes
         matrixData: null,
-        paperMatrixCells: {},  // {code_id: {value, notes}} for selected paper
+        paperMatrixCells: {},  // {column_id: {value, notes}} for selected paper
+        showColumnEditor: false,
+        newColumnName: "",
+        newColumnType: "enum_single",
+        newOptionValues: {},   // {column_id: "value"}
+
+        // Themes view
+        selectedThemeCodeId: null,
+        themesAnnotations: [],
+
+        // Per-paper summary
+        paperSummary: [],
 
         // Annotation state
         selectedAnnotation: null,    // annotation detail view
@@ -82,9 +96,11 @@ document.addEventListener("alpine:init", () => {
         codePickerSearch: "",        // search filter for code picker
 
         // Toast
-        toast: "",
-        toastType: "info",
-        toastTimeout: null,
+        toasts: [],  // [{id, msg, type}]
+        _toastCounter: 0,
+
+        // Dirty tracking for unsaved changes warning
+        _reviewFormClean: null,  // snapshot of reviewForm when paper loaded
 
         async init() {
             this.$watch("theme", (val) => {
@@ -102,6 +118,13 @@ document.addEventListener("alpine:init", () => {
                     if (this.showAnnotationToolbar) { this.cancelAnnotation(); return; }
                     if (this.selectedAnnotation) { this.selectedAnnotation = null; return; }
                     if (this.showCodeManager) { this.showCodeManager = false; return; }
+                }
+
+                // Ctrl+S / Cmd+S to save review
+                if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+                    e.preventDefault();
+                    this.saveReview();
+                    return;
                 }
 
                 if (isTyping) return;
@@ -134,6 +157,7 @@ document.addEventListener("alpine:init", () => {
                 this.loadCodes(),
                 this.loadCodingCompleteness(),
                 this.loadCodeUsageCounts(),
+                this.loadMatrixColumns(),
             ]);
 
             // Auto-select first paper on load
@@ -150,24 +174,43 @@ document.addEventListener("alpine:init", () => {
             if (this.searchQuery) params.set("search", this.searchQuery);
             if (this.statusFilter !== "all") params.set("status", this.statusFilter);
             const res = await fetch(`api/papers?${params}`);
+            if (!res.ok) { this.showToast("Failed to load papers", "error"); return; }
             this.papers = await res.json();
+            // Scroll selected paper into view after list reload
+            this.$nextTick(() => {
+                const el = document.querySelector(`[data-paper-id="${this.selectedPaperId}"]`);
+                if (el) el.scrollIntoView({ block: "nearest" });
+            });
         },
 
         async loadExclusionCodes() {
             const res = await fetch("api/exclusion-codes");
+            if (!res.ok) return;
             this.exclusionCodes = await res.json();
         },
 
         async loadStats() {
             const res = await fetch("api/stats");
+            if (!res.ok) return;
             this.stats = await res.json();
         },
 
         // --- Paper selection ---
 
-        async selectPaper(id) {
+        get isReviewDirty() {
+            if (!this._reviewFormClean) return false;
+            return JSON.stringify(this.reviewForm) !== this._reviewFormClean;
+        },
+
+        async selectPaper(id, force = false) {
+            // Warn if unsaved changes
+            if (!force && this.isReviewDirty) {
+                if (!confirm("You have unsaved review changes. Discard?")) return;
+            }
+
             this.selectedPaperId = id;
             const res = await fetch(`api/papers/${id}`);
+            if (!res.ok) { this.showToast("Failed to load paper", "error"); return; }
             this.selectedPaper = await res.json();
 
             // Populate review form
@@ -178,6 +221,7 @@ document.addEventListener("alpine:init", () => {
                     (c) => c.id
                 ),
             };
+            this._reviewFormClean = JSON.stringify(this.reviewForm);
 
             // Load PDF if available
             if (this.selectedPaper.pdf_path) {
@@ -186,10 +230,11 @@ document.addEventListener("alpine:init", () => {
                 this.clearPdf();
             }
 
-            // Load annotations and matrix cells for this paper
+            // Load annotations, matrix cells, and summary for this paper
             await Promise.all([
                 this.loadPaperAnnotations(),
                 this.loadPaperMatrixCells(),
+                this.loadPaperSummary(),
             ]);
         },
 
@@ -229,6 +274,7 @@ document.addEventListener("alpine:init", () => {
             const container = this.$refs?.pdfPages;
             if (container) container.innerHTML = "";
             _pdfDoc = null;
+            _pageViewports = {};
             this.pdfPageCount = 0;
             this.pdfCurrentPage = 1;
         },
@@ -678,6 +724,7 @@ document.addEventListener("alpine:init", () => {
                 const data = await res.json();
                 if (data.success) {
                     this.showToast("Review saved", "success");
+                    this._reviewFormClean = JSON.stringify(this.reviewForm);
                     await this.loadPapers();
                     await this.loadStats();
                     // Update selected paper state
@@ -768,6 +815,7 @@ document.addEventListener("alpine:init", () => {
 
         async loadCodes() {
             const res = await fetch("api/codes");
+            if (!res.ok) return;
             this.codes = await res.json();
         },
 
@@ -827,6 +875,7 @@ document.addEventListener("alpine:init", () => {
 
         async loadCodeUsageCounts() {
             const res = await fetch("api/codes/usage");
+            if (!res.ok) return;
             this.codeUsageCounts = await res.json();
         },
 
@@ -864,6 +913,7 @@ document.addEventListener("alpine:init", () => {
         async loadPaperAnnotations() {
             if (!this.selectedPaperId) return;
             const res = await fetch(`api/papers/${this.selectedPaperId}/annotations`);
+            if (!res.ok) { this.showToast("Failed to load annotations", "error"); return; }
             this.paperAnnotations = await res.json();
             // Re-render overlays if PDF is loaded
             if (Object.keys(_pageViewports).length > 0) {
@@ -1108,60 +1158,218 @@ document.addEventListener("alpine:init", () => {
             event.preventDefault();
         },
 
-        // --- Matrix ---
+        // --- Matrix Columns ---
+
+        async loadMatrixColumns() {
+            const res = await fetch("api/matrix-columns");
+            if (!res.ok) return;
+            this.matrixColumns = await res.json();
+        },
+
+        async createMatrixColumn() {
+            if (!this.newColumnName.trim()) return;
+            const res = await fetch("api/matrix-columns", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    name: this.newColumnName.trim(),
+                    column_type: this.newColumnType,
+                }),
+            });
+            if (res.ok) {
+                this.newColumnName = "";
+                await this.loadMatrixColumns();
+                this.showToast("Column created", "success");
+            } else {
+                const err = await res.json();
+                this.showToast(err.error || "Failed", "error");
+            }
+        },
+
+        async updateMatrixColumn(colId, updates) {
+            await fetch(`api/matrix-columns/${colId}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(updates),
+            });
+            await this.loadMatrixColumns();
+        },
+
+        async deleteMatrixColumn(colId) {
+            const res = await fetch(`api/matrix-columns/${colId}`, { method: "DELETE" });
+            if (res.ok) {
+                await this.loadMatrixColumns();
+                this.showToast("Column deleted", "success");
+            } else {
+                this.showToast("Failed to delete column", "error");
+            }
+        },
+
+        async addColumnOption(colId) {
+            const value = this.newOptionValues[colId]?.trim();
+            if (!value) return;
+            const res = await fetch(`api/matrix-columns/${colId}/options`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ value }),
+            });
+            if (res.ok) {
+                this.newOptionValues[colId] = "";
+                await this.loadMatrixColumns();
+            }
+        },
+
+        async deleteColumnOption(optId) {
+            await fetch(`api/matrix-column-options/${optId}`, { method: "DELETE" });
+            await this.loadMatrixColumns();
+        },
+
+        async linkColumnCode(colId, codeId) {
+            await fetch(`api/matrix-columns/${colId}/codes/${codeId}`, { method: "POST" });
+            await this.loadMatrixColumns();
+        },
+
+        async unlinkColumnCode(colId, codeId) {
+            await fetch(`api/matrix-columns/${colId}/codes/${codeId}`, { method: "DELETE" });
+            await this.loadMatrixColumns();
+        },
+
+        // --- Matrix Data ---
 
         async loadCodingCompleteness() {
             const res = await fetch("api/coding/completeness");
+            if (!res.ok) return;
             this.codingCompleteness = await res.json();
         },
 
         async loadMatrix() {
             const res = await fetch("api/matrix");
+            if (!res.ok) { this.showToast("Failed to load matrix", "error"); return; }
             this.matrixData = await res.json();
         },
 
-        async saveMatrixCell(docId, codeId, value) {
-            await fetch("api/matrix/cell", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ document_id: docId, code_id: codeId, value }),
-            });
-            // Update local state
+        saveMatrixCell(docId, colId, value) {
+            // Update local state immediately
             if (!this.matrixData.cells[docId]) this.matrixData.cells[docId] = {};
-            this.matrixData.cells[docId][codeId] = { value, notes: null };
+            this.matrixData.cells[docId][colId] = { value, notes: null };
+            // Debounce the API call
+            const key = `${docId}-${colId}`;
+            clearTimeout(_matrixSaveTimers[key]);
+            _matrixSaveTimers[key] = setTimeout(() => {
+                fetch("api/matrix/cell", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ document_id: docId, column_id: colId, value }),
+                });
+                delete _matrixSaveTimers[key];
+            }, 500);
         },
 
         async loadPaperMatrixCells() {
             if (!this.selectedPaperId) return;
             const res = await fetch(`api/papers/${this.selectedPaperId}/matrix-cells`);
+            if (!res.ok) return;
             this.paperMatrixCells = await res.json();
         },
 
-        async savePaperMatrixCell(codeId, value) {
-            await fetch("api/matrix/cell", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ document_id: this.selectedPaperId, code_id: codeId, value }),
-            });
-            if (!this.paperMatrixCells[codeId]) this.paperMatrixCells[codeId] = {};
-            this.paperMatrixCells[codeId].value = value;
+        savePaperMatrixCell(colId, value) {
+            // Update local state immediately
+            if (!this.paperMatrixCells[colId]) this.paperMatrixCells[colId] = {};
+            this.paperMatrixCells[colId].value = value;
+            // Debounce the API call
+            const docId = this.selectedPaperId;
+            const key = `p-${docId}-${colId}`;
+            clearTimeout(_matrixSaveTimers[key]);
+            _matrixSaveTimers[key] = setTimeout(() => {
+                fetch("api/matrix/cell", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ document_id: docId, column_id: colId, value }),
+                });
+                delete _matrixSaveTimers[key];
+            }, 500);
         },
 
-        getEvidenceForCode(code) {
-            const codeIds = new Set([code.id, ...(code.children || []).map(c => c.id)]);
+        toggleMultiValue(colId, optValue, scope = "paper") {
+            const cells = scope === "paper" ? this.paperMatrixCells : (this.matrixData?.cells || {});
+            const docId = scope === "paper" ? this.selectedPaperId : null;
+
+            let current = [];
+            try {
+                const raw = scope === "paper"
+                    ? (this.paperMatrixCells[colId]?.value || "[]")
+                    : (cells[docId]?.[colId]?.value || "[]");
+                current = JSON.parse(raw);
+            } catch { current = []; }
+
+            const idx = current.indexOf(optValue);
+            if (idx >= 0) current.splice(idx, 1);
+            else current.push(optValue);
+
+            const newValue = JSON.stringify(current);
+            if (scope === "paper") {
+                this.savePaperMatrixCell(colId, newValue);
+            }
+        },
+
+        parseMultiValue(val) {
+            try { return JSON.parse(val || "[]"); } catch { return []; }
+        },
+
+        getEvidenceForColumn(column) {
+            if (!column.linked_codes?.length) return [];
+            const codeIds = new Set();
+            for (const lc of column.linked_codes) {
+                codeIds.add(lc.id);
+                // Also include sub-codes
+                for (const code of this.codes) {
+                    if (code.id === lc.id) {
+                        for (const ch of code.children || []) codeIds.add(ch.id);
+                    }
+                    for (const ch of code.children || []) {
+                        if (ch.id === lc.id) codeIds.add(ch.id);
+                    }
+                }
+            }
             return this.paperAnnotations.filter(ann =>
                 ann.codes.some(c => codeIds.has(c.id))
             );
         },
 
+        // --- Themes ---
+
+        async loadThemes(codeId) {
+            this.selectedThemeCodeId = codeId;
+            const res = await fetch(`api/themes/${codeId}`);
+            if (!res.ok) { this.showToast("Failed to load themes", "error"); return; }
+            this.themesAnnotations = await res.json();
+        },
+
+        async navigateToAnnotation(docId, annPageNumber) {
+            this.view = "papers";
+            await this.selectPaper(docId, true);
+            this.$nextTick(() => {
+                const pageDiv = document.querySelector(`.pdf-page[data-page="${annPageNumber}"]`);
+                if (pageDiv) pageDiv.scrollIntoView({ behavior: "smooth", block: "center" });
+            });
+        },
+
+        // --- Per-paper Summary ---
+
+        async loadPaperSummary() {
+            if (!this.selectedPaperId) return;
+            const res = await fetch(`api/papers/${this.selectedPaperId}/summary`);
+            if (!res.ok) return;
+            this.paperSummary = await res.json();
+        },
+
         // --- Toast ---
 
         showToast(msg, type = "info") {
-            this.toast = msg;
-            this.toastType = type;
-            clearTimeout(this.toastTimeout);
-            this.toastTimeout = setTimeout(() => {
-                this.toast = "";
+            const id = ++this._toastCounter;
+            this.toasts.push({ id, msg, type });
+            setTimeout(() => {
+                this.toasts = this.toasts.filter(t => t.id !== id);
             }, 3000);
         },
     }));
