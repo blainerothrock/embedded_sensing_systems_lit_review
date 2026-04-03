@@ -124,6 +124,13 @@ function openDetail(annotation) {
             <div class="flex items-center gap-2 mb-1">
               <span class="badge badge-xs badge-ghost">p.{{ region.page }}</span>
               <span class="text-xs opacity-50">{{ region.type === 'area' ? 'area' : 'highlight' }}</span>
+              <div class="flex-1"></div>
+              <button
+                v-if="regions.length > 1"
+                class="btn btn-ghost btn-xs btn-square opacity-30 text-error"
+                @click="workspace.deleteRegion(idx)"
+                title="Remove this region"
+              >✕</button>
             </div>
             <p v-if="region.text" class="text-xs italic opacity-80 leading-relaxed">{{ region.text }}</p>
             <p v-else-if="region.type === 'area'" class="text-xs opacity-40">Area annotation</p>

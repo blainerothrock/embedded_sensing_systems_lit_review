@@ -156,12 +156,35 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function renderChatContent(content) {
-    let html = escapeHtml(content)
-    html = html.replace(/\[\[quote:&quot;(.*?)&quot;\s+p\.(\d+)\]\]/g, (match, text, page) => {
-      return `<div class="chat-quote cursor-pointer" data-page="${page}" data-quote="${text}"><span class="italic">&ldquo;${text}&rdquo;</span> <span class="badge badge-xs badge-primary">p.${page}</span></div>`
+    // Parse quote/page links BEFORE escaping so we work with raw text
+    // Replace [[quote:"..." p.N]] with placeholder tokens, then escape, then restore
+    const quotes = []
+    let processed = content.replace(/\[\[quote:"([\s\S]*?)"\s+p\.(\d+)\]\]/g, (match, text, page) => {
+      const idx = quotes.length
+      quotes.push({ text: text.replace(/\n/g, ' ').trim(), page })
+      return `%%QUOTE_${idx}%%`
     })
-    html = html.replace(/\[\[p\.(\d+)\]\]/g,
-      '<button class="badge badge-xs badge-primary cursor-pointer mx-0.5" data-scroll-page="$1">p.$1</button>')
+    const pageRefs = []
+    processed = processed.replace(/\[\[p\.(\d+)\]\]/g, (match, page) => {
+      const idx = pageRefs.length
+      pageRefs.push(page)
+      return `%%PAGE_${idx}%%`
+    })
+
+    let html = escapeHtml(processed)
+
+    // Restore quote placeholders
+    for (let i = 0; i < quotes.length; i++) {
+      const q = quotes[i]
+      const escaped = escapeHtml(q.text)
+      html = html.replace(`%%QUOTE_${i}%%`,
+        `<div class="chat-quote cursor-pointer" data-page="${q.page}" data-quote="${escaped}"><span class="italic">&ldquo;${escaped}&rdquo;</span> <span class="badge badge-xs badge-primary">p.${q.page}</span></div>`)
+    }
+    // Restore page ref placeholders
+    for (let i = 0; i < pageRefs.length; i++) {
+      html = html.replace(`%%PAGE_${i}%%`,
+        `<button class="badge badge-xs badge-primary cursor-pointer mx-0.5" data-scroll-page="${pageRefs[i]}">p.${pageRefs[i]}</button>`)
+    }
     html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="bg-base-300 rounded p-2 text-xs my-1 overflow-x-auto"><code>$2</code></pre>')
     html = html.replace(/`([^`]+)`/g, '<code class="bg-base-300 rounded px-1 text-xs">$1</code>')
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')

@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useUiStore } from '@/stores/ui'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useMatrixStore } from '@/stores/matrix'
@@ -8,9 +8,27 @@ const ui = useUiStore()
 const workspace = useWorkspaceStore()
 const matrix = useMatrixStore()
 
+const hiddenColumns = ref(new Set())
+
 onMounted(() => {
   if (!matrix.matrixData) matrix.loadMatrixData()
 })
+
+const visibleColumns = computed(() => {
+  if (!matrix.matrixData) return []
+  return matrix.matrixData.columns.filter(c => !hiddenColumns.value.has(c.id))
+})
+
+function toggleColumn(colId) {
+  const s = new Set(hiddenColumns.value)
+  if (s.has(colId)) s.delete(colId)
+  else s.add(colId)
+  hiddenColumns.value = s
+}
+
+function onStatusChange() {
+  matrix.loadMatrixData()
+}
 
 function navigateToPaper(paperId) {
   ui.setView('papers')
@@ -34,7 +52,33 @@ function toggleCellMulti(paperId, colId, optValue) {
 </script>
 
 <template>
-  <div class="h-[calc(100vh-3rem)] overflow-auto p-4">
+  <div class="h-[calc(100vh-3rem)] flex flex-col">
+    <!-- Toolbar -->
+    <div v-if="matrix.matrixData" class="p-3 border-b border-base-300 bg-base-200 flex items-center gap-3 flex-wrap shrink-0">
+      <select class="select select-sm" v-model="matrix.matrixStatusFilter" @change="onStatusChange()">
+        <option value="all">All papers</option>
+        <option value="included">Included</option>
+        <option value="excluded">Excluded</option>
+        <option value="pending">Pending</option>
+      </select>
+      <span class="text-xs opacity-60">{{ matrix.matrixData.papers.length }} papers</span>
+      <div class="divider divider-horizontal mx-0"></div>
+      <span class="text-xs opacity-60">Columns:</span>
+      <div class="flex gap-1 flex-wrap">
+        <button
+          v-for="col in visibleColumns"
+          :key="'toggle-' + col.id"
+          class="btn btn-xs"
+          :class="hiddenColumns.has(col.id) ? 'btn-ghost opacity-40' : 'btn-outline'"
+          @click="toggleColumn(col.id)"
+        >
+          <span class="w-2 h-2 rounded-full inline-block" :style="{ background: col.color }"></span>
+          {{ col.name }}
+        </button>
+      </div>
+    </div>
+
+    <div class="flex-1 overflow-auto p-4">
     <template v-if="matrix.matrixData">
       <div class="overflow-x-auto">
         <table class="table table-xs table-pin-rows table-pin-cols">
@@ -43,7 +87,7 @@ function toggleCellMulti(paperId, colId, optValue) {
               <th class="bg-base-200 z-20">Paper</th>
               <th class="bg-base-200">Year</th>
               <th
-                v-for="col in matrix.matrixData.columns"
+                v-for="col in visibleColumns"
                 :key="'h-' + col.id"
                 class="bg-base-200 text-center min-w-28"
               >
@@ -63,7 +107,7 @@ function toggleCellMulti(paperId, colId, optValue) {
               >{{ paper.title }}</td>
               <td class="bg-base-200">{{ paper.year }}</td>
               <td
-                v-for="col in matrix.matrixData.columns"
+                v-for="col in visibleColumns"
                 :key="'c-' + col.id + '-' + paper.id"
                 class="text-center p-1"
                 @click.stop
@@ -111,6 +155,7 @@ function toggleCellMulti(paperId, colId, optValue) {
     </template>
     <div v-else class="flex items-center justify-center h-full">
       <span class="loading loading-spinner loading-md"></span>
+    </div>
     </div>
   </div>
 </template>

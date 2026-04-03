@@ -21,6 +21,8 @@ const matrix = useMatrixStore()
 useKeyboard()
 
 onMounted(async () => {
+  await ui.loadSettings()
+
   await Promise.all([
     workspace.loadPapers(),
     workspace.loadExclusionCodes(),
@@ -28,7 +30,17 @@ onMounted(async () => {
     codebook.loadCodes(),
     codebook.loadUsageCounts(),
     matrix.loadColumns(),
+    matrix.loadCompleteness(),
   ])
+
+  // Restore last selected paper
+  const savedPaperId = localStorage.getItem('activePaperId')
+  if (savedPaperId) {
+    const id = parseInt(savedPaperId)
+    if (workspace.papers.some(p => p.id === id)) {
+      workspace.selectPaper(id)
+    }
+  }
 })
 
 watch(() => ui.theme, (theme) => {

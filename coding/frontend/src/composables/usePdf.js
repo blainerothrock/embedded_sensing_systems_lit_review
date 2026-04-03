@@ -52,21 +52,30 @@ export function usePdf() {
     currentPage.value = 1
   }
 
+  let pendingRender = null
+
   async function renderAllPages(containerEl) {
     const ui = useUiStore()
-    if (!pdfDoc.value || rendering.value) return
+    if (!pdfDoc.value) return
+
+    // If already rendering, queue this request and return
+    if (rendering.value) {
+      pendingRender = containerEl
+      return
+    }
     rendering.value = true
 
+    const scale = ui.pdfScale
     containerEl.innerHTML = ''
     const newViewports = {}
 
     for (let i = 1; i <= pdfDoc.value.numPages; i++) {
       const page = await pdfDoc.value.getPage(i)
-      const viewport = page.getViewport({ scale: ui.pdfScale })
+      const viewport = page.getViewport({ scale })
       newViewports[i] = viewport
 
       const pageDiv = document.createElement('div')
-      pageDiv.className = 'pdf-page mb-2 shadow-lg'
+      pageDiv.className = 'pdf-page mb-6 shadow-lg'
       pageDiv.dataset.page = i
       pageDiv.style.width = viewport.width + 'px'
       pageDiv.style.height = viewport.height + 'px'
@@ -113,6 +122,13 @@ export function usePdf() {
 
     pageViewports.value = newViewports
     rendering.value = false
+
+    // If a render was queued while we were busy, run it now
+    if (pendingRender) {
+      const el = pendingRender
+      pendingRender = null
+      await renderAllPages(el)
+    }
   }
 
   function renderAnnotationOverlays(annotations) {
@@ -183,6 +199,7 @@ export function usePdf() {
     const oldScale = ui.pdfScale
     const newScale = Math.min(Math.max(oldScale + delta, 0.5), 4.0)
     if (newScale === oldScale) return
+    ui.userSetZoom = true
 
     if (!zoomAnchor) {
       const rect = containerEl.getBoundingClientRect()

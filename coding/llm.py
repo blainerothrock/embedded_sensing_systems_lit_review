@@ -16,14 +16,11 @@ DEFAULT_OLLAMA_PARAMS = {
 
 
 def get_ollama_models() -> list[str]:
-    """Get installed Qwen3.5 models from Ollama."""
+    """Get installed models from Ollama."""
     try:
         import ollama
         models = ollama.list()
-        return sorted(
-            m.model for m in models.models
-            if "qwen3" in m.model.lower()
-        )
+        return sorted(m.model for m in models.models)
     except Exception:
         return []
 

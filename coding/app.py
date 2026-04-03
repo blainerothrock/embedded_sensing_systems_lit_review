@@ -59,8 +59,9 @@ def serve_assets(filename):
 def api_papers():
     search = request.args.get("search", "")
     status = request.args.get("status", "all")
+    sort = request.args.get("sort", "title")
     with db.connect() as conn:
-        papers = db.get_phase3_papers(conn, search=search, status=status)
+        papers = db.get_phase3_papers(conn, search=search, status=status, sort=sort)
     return jsonify(papers)
 
 
@@ -129,6 +130,19 @@ def api_save_review(doc_id):
 
     with db.connect() as conn:
         db.save_phase3_review(conn, doc_id, decision, notes, exclusion_code_ids)
+    return jsonify({"success": True})
+
+
+@app.route("/api/papers/<int:doc_id>/coding-status", methods=["POST"])
+def api_save_coding_status(doc_id):
+    data = request.get_json()
+    status = data.get("coding_status")  # 'coding', 'complete', or null
+    with db.connect() as conn:
+        conn.execute("""
+            UPDATE pass_review SET coding_status = ?
+            WHERE document_id = ? AND pass_number = 3
+        """, (status, doc_id))
+        conn.commit()
     return jsonify({"success": True})
 
 
@@ -304,6 +318,16 @@ def api_create_column_option(col_id):
     return jsonify(opt), 201
 
 
+@app.route("/api/matrix-column-options/<int:opt_id>", methods=["PUT"])
+def api_update_column_option(opt_id):
+    data = request.get_json()
+    with db.connect() as conn:
+        opt = db.update_column_option(conn, opt_id, **data)
+    if opt is None:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify(opt)
+
+
 @app.route("/api/matrix-column-options/<int:opt_id>", methods=["DELETE"])
 def api_delete_column_option(opt_id):
     with db.connect() as conn:
@@ -430,7 +454,8 @@ def _build_system_prompt(conn, doc_id: int) -> str:
             opts = ""
             if col.get("options"):
                 opts = f" (options: {', '.join(o['value'] for o in col['options'])})"
-            parts.append(f"- **{col['name']}** [{col['column_type']}]{opts}")
+            cdesc = f" — {col['description']}" if col.get('description') else ""
+            parts.append(f"- **{col['name']}** [{col['column_type']}]{opts}{cdesc}")
 
     if annotations:
         parts.append("\n## Current Annotations on This Paper")
@@ -625,6 +650,24 @@ def api_save_paper_note(doc_id):
     return jsonify({"success": True})
 
 
+# --- API: Settings ---
+
+@app.route("/api/settings")
+def api_get_settings():
+    with db.connect() as conn:
+        settings = db.get_all_settings(conn)
+    return jsonify(settings)
+
+
+@app.route("/api/settings", methods=["PUT"])
+def api_save_settings():
+    data = request.get_json()
+    with db.connect() as conn:
+        for key, value in data.items():
+            db.save_setting(conn, key, str(value))
+    return jsonify({"success": True})
+
+
 # --- API: Stats ---
 
 @app.route("/api/stats")
@@ -661,6 +704,8 @@ def main():
             url,
             width=1400,
             height=900,
+            text_select=True,
+            easy_drag=False,
         )
         webview.start()
     else:

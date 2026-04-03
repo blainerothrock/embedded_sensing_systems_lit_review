@@ -3,13 +3,10 @@ import { useUiStore } from '@/stores/ui'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useCodebookStore } from '@/stores/codebook'
 import { useMatrixStore } from '@/stores/matrix'
-import { useChatStore } from '@/stores/chat'
-
 const ui = useUiStore()
 const workspace = useWorkspaceStore()
 const codebook = useCodebookStore()
 const matrix = useMatrixStore()
-const chat = useChatStore()
 
 function openCodeManager() {
   ui.showCodeManager = true
@@ -31,14 +28,6 @@ function switchToThemes() {
   ui.setView('themes')
 }
 
-function toggleChat() {
-  ui.showChat = !ui.showChat
-  if (ui.showChat && workspace.activePaperId) {
-    chat.loadChats(workspace.activePaperId)
-  } else {
-    chat.abort()
-  }
-}
 </script>
 
 <template>
@@ -80,18 +69,6 @@ function toggleChat() {
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
         </svg>
         Columns
-      </button>
-      <button
-        class="btn btn-xs gap-1"
-        :class="ui.showChat ? 'btn-secondary' : 'btn-ghost'"
-        @click="toggleChat()"
-        v-show="ui.view === 'papers' && workspace.activePaper"
-        title="Chat with paper"
-      >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z"/>
-        </svg>
-        Chat
       </button>
       <div class="text-sm opacity-70" v-show="workspace.stats">
         {{ workspace.stats?.reviewed }}/{{ workspace.stats?.total }} reviewed

@@ -32,10 +32,22 @@ export const useCodebookStore = defineStore('codebook', () => {
     codeUsageCounts.value = await api.codes.usage()
   }
 
+  function randomColor() {
+    const hue = Math.floor(Math.random() * 360)
+    const s = 65, l = 55
+    const a = (s / 100) * Math.min(l / 100, 1 - l / 100)
+    const f = n => {
+      const k = (n + hue / 30) % 12
+      const c = l / 100 - a * Math.max(Math.min(k - 3, 9 - k, 1), -1)
+      return Math.round(255 * c).toString(16).padStart(2, '0')
+    }
+    return `#${f(0)}${f(8)}${f(4)}`
+  }
+
   async function createTopCode() {
     const ui = useUiStore()
     if (!newCodeName.value.trim()) return
-    await api.codes.create({ name: newCodeName.value.trim() })
+    await api.codes.create({ name: newCodeName.value.trim(), color: randomColor() })
     newCodeName.value = ''
     await loadCodes()
     ui.showToast('Code created', 'success')
@@ -44,9 +56,16 @@ export const useCodebookStore = defineStore('codebook', () => {
   async function createSubCode(parentId) {
     const name = newSubCodeNames.value[parentId]?.trim()
     if (!name) return
-    await api.codes.create({ name, parent_id: parentId })
+    await api.codes.create({ name, parent_id: parentId, color: randomColor() })
     newSubCodeNames.value[parentId] = ''
     await loadCodes()
+  }
+
+  async function createSubCodeAndReturn(parentId, name) {
+    if (!name?.trim()) return null
+    const code = await api.codes.create({ name: name.trim(), parent_id: parentId, color: randomColor() })
+    await loadCodes()
+    return code
   }
 
   async function updateCode(codeId, updates) {
@@ -90,6 +109,41 @@ export const useCodebookStore = defineStore('codebook', () => {
     ])
   }
 
+  async function shuffleColors() {
+    if (!confirm('Reassign all code colors? This cannot be undone.')) return
+    const ui = useUiStore()
+    const allCodes = allCodesFlat.value
+    const n = allCodes.length
+    // Generate evenly-spaced hues with consistent saturation/lightness
+    const shuffled = [...Array(n).keys()]
+    // Fisher-Yates shuffle the hue indices for variety
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+    }
+    const promises = allCodes.map((code, i) => {
+      const hue = (shuffled[i] * 360) / n
+      const color = `hsl(${Math.round(hue)}, 65%, 55%)`
+      // Convert HSL to hex for storage
+      const hex = hslToHex(hue, 65, 55)
+      return api.codes.update(code.id, { color: hex })
+    })
+    await Promise.all(promises)
+    await loadCodes()
+    ui.showToast('Colors shuffled', 'success')
+  }
+
+  function hslToHex(h, s, l) {
+    s /= 100; l /= 100
+    const a = s * Math.min(l, 1 - l)
+    const f = n => {
+      const k = (n + h / 30) % 12
+      const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1)
+      return Math.round(255 * color).toString(16).padStart(2, '0')
+    }
+    return `#${f(0)}${f(8)}${f(4)}`
+  }
+
   function codeMatchesSearch(topCode, query) {
     const q = query.toLowerCase()
     if (!q) return true
@@ -108,7 +162,8 @@ export const useCodebookStore = defineStore('codebook', () => {
     codes, codeUsageCounts, newCodeName, newSubCodeNames,
     topLevelCodes, allCodesFlat,
     loadCodes, loadUsageCounts,
-    createTopCode, createSubCode, updateCode, deleteCode, reorderCode,
+    createTopCode, createSubCode, createSubCodeAndReturn, updateCode, deleteCode, reorderCode,
+    shuffleColors,
     codeMatchesSearch, subCodeMatchesSearch,
   }
 })

@@ -45,6 +45,7 @@ export const api = {
     list: (params = {}) => get(`/api/papers?${new URLSearchParams(params)}`),
     get: (id) => get(`/api/papers/${id}`),
     review: (id, data) => post(`/api/papers/${id}/review`, data),
+    setCodingStatus: (id, coding_status) => post(`/api/papers/${id}/coding-status`, { coding_status }),
     getNotes: (id) => get(`/api/papers/${id}/notes`),
     saveNotes: (id, content) => put(`/api/papers/${id}/notes`, { content }),
   },
@@ -84,6 +85,7 @@ export const api = {
     update: (id, data) => put(`/api/matrix-columns/${id}`, data),
     delete: (id) => del(`/api/matrix-columns/${id}`),
     addOption: (id, data) => post(`/api/matrix-columns/${id}/options`, data),
+    updateOption: (optId, data) => put(`/api/matrix-column-options/${optId}`, data),
     deleteOption: (optId) => del(`/api/matrix-column-options/${optId}`),
     linkCode: (colId, codeId) => post(`/api/matrix-columns/${colId}/codes/${codeId}`),
     unlinkCode: (colId, codeId) => del(`/api/matrix-columns/${colId}/codes/${codeId}`),
@@ -91,7 +93,7 @@ export const api = {
 
   // Matrix Data
   matrix: {
-    data: () => get('/api/matrix'),
+    data: (params = {}) => get(`/api/matrix?${new URLSearchParams(params)}`),
     saveCell: (data) => post('/api/matrix/cell', data),
     paperCells: (paperId) => get(`/api/papers/${paperId}/matrix-cells`),
     completeness: () => get('/api/coding/completeness'),
@@ -109,6 +111,12 @@ export const api = {
     delete: (chatId) => del(`/api/chats/${chatId}`),
     update: (chatId, data) => put(`/api/chats/${chatId}`, data),
     streamUrl: (chatId) => `/api/chats/${chatId}/messages/stream`,
+  },
+
+  // Settings
+  settings: {
+    get: () => get('/api/settings'),
+    save: (data) => put('/api/settings', data),
   },
 
   // LLM

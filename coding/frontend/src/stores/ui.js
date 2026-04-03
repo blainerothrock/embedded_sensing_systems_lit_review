@@ -1,5 +1,9 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
+import { api } from '@/api'
+
+let saveTimer = null
+let loading = false
 
 export const useUiStore = defineStore('ui', () => {
   // View
@@ -7,8 +11,7 @@ export const useUiStore = defineStore('ui', () => {
   const rightTab = ref('details') // 'details' | 'annotations' | 'summary' | 'matrix'
 
   // Theme
-  const theme = ref(localStorage.getItem('theme') || 'dark')
-  watch(theme, (v) => localStorage.setItem('theme', v))
+  const theme = ref('dark')
 
   function toggleTheme() {
     theme.value = theme.value === 'dark' ? 'light' : 'dark'
@@ -16,16 +19,14 @@ export const useUiStore = defineStore('ui', () => {
 
   // Layout
   const sidebarOpen = ref(true)
-  const leftWidth = ref(parseInt(localStorage.getItem('leftWidth')) || 280)
-  const rightWidth = ref(parseInt(localStorage.getItem('rightWidth')) || 320)
+  const leftWidth = ref(280)
+  const rightWidth = ref(320)
   const resizing = ref(false)
-
-  watch(leftWidth, (v) => localStorage.setItem('leftWidth', v))
-  watch(rightWidth, (v) => localStorage.setItem('rightWidth', v))
 
   // PDF mode
   const pdfMode = ref('hand') // 'hand' | 'text' | 'box'
   const pdfScale = ref(1.5)
+  const userSetZoom = ref(false)
 
   function setPdfMode(mode) {
     pdfMode.value = mode
@@ -34,7 +35,6 @@ export const useUiStore = defineStore('ui', () => {
   // Modals
   const showCodeManager = ref(false)
   const showColumnEditor = ref(false)
-  const showChat = ref(false)
 
   // Toasts
   const toasts = ref([])
@@ -54,13 +54,55 @@ export const useUiStore = defineStore('ui', () => {
     view.value = v
   }
 
+  // Persistent settings keys
+  const SETTINGS_KEYS = ['theme', 'sidebarOpen', 'leftWidth', 'rightWidth', 'pdfMode', 'pdfScale', 'rightTab']
+
+  function debouncedSave() {
+    if (loading) return
+    clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      const data = {}
+      for (const key of SETTINGS_KEYS) {
+        const val = { theme, sidebarOpen, leftWidth, rightWidth, pdfMode, pdfScale, rightTab }[key]
+        data[key] = String(val.value)
+      }
+      api.settings.save(data).catch(() => {})
+    }, 500)
+  }
+
+  // Watch all persisted settings and debounce-save to backend
+  for (const key of SETTINGS_KEYS) {
+    const val = { theme, sidebarOpen, leftWidth, rightWidth, pdfMode, pdfScale, rightTab }[key]
+    watch(val, () => debouncedSave())
+  }
+
+  async function loadSettings() {
+    loading = true
+    try {
+      const settings = await api.settings.get()
+      if (settings.theme) theme.value = settings.theme
+      if (settings.sidebarOpen !== undefined) sidebarOpen.value = settings.sidebarOpen !== 'false'
+      if (settings.leftWidth) leftWidth.value = parseInt(settings.leftWidth) || 280
+      if (settings.rightWidth) rightWidth.value = parseInt(settings.rightWidth) || 320
+      if (settings.pdfMode) pdfMode.value = settings.pdfMode
+      if (settings.pdfScale) {
+        pdfScale.value = parseFloat(settings.pdfScale) || 1.5
+        userSetZoom.value = true
+      }
+      if (settings.rightTab) rightTab.value = settings.rightTab
+    } catch {
+      // Settings not available yet, use defaults
+    }
+    loading = false
+  }
+
   return {
     view, rightTab,
     theme, toggleTheme,
     sidebarOpen, leftWidth, rightWidth, resizing,
-    pdfMode, pdfScale, setPdfMode,
-    showCodeManager, showColumnEditor, showChat,
+    pdfMode, pdfScale, userSetZoom, setPdfMode,
+    showCodeManager, showColumnEditor,
     toasts, showToast,
-    setView,
+    setView, loadSettings,
   }
 })

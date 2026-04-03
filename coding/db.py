@@ -43,7 +43,8 @@ def _paper_select(extra_columns: str = "") -> str:
             COALESCE(a.journal, ip.booktitle, ib.booktitle) as venue,
             dp.pdf_path,
             pr3.decision as phase3_decision,
-            pr3.notes as phase3_notes{extra}
+            pr3.notes as phase3_notes,
+            pr3.coding_status{extra}
         FROM document d
         LEFT JOIN article a ON a.document_id = d.id
         LEFT JOIN inproceedings ip ON ip.document_id = d.id
@@ -53,7 +54,9 @@ def _paper_select(extra_columns: str = "") -> str:
     """
 
 
-def get_phase3_papers(conn: sqlite3.Connection, search: str = "", status: str = "all") -> list[dict]:
+def get_phase3_papers(
+    conn: sqlite3.Connection, search: str = "", status: str = "all", sort: str = "title",
+) -> list[dict]:
     """Get all Pass 2 included papers with Phase 3 status and PDF info."""
     query = _paper_select() + """
         INNER JOIN pass_review pr2 ON pr2.document_id = d.id
@@ -68,21 +71,33 @@ def get_phase3_papers(conn: sqlite3.Connection, search: str = "", status: str = 
             COALESCE(a.keywords, ip.keywords, ib.keywords) LIKE ?)""")
         params.extend([f"%{search}%"] * 3)
 
-    if status == "pending":
-        conditions.append("pr3.decision IS NULL")
-    elif status == "include":
-        conditions.append("pr3.decision = 'include'")
-    elif status == "exclude":
-        conditions.append("pr3.decision = 'exclude'")
-    elif status == "has_pdf":
-        conditions.append("dp.pdf_path IS NOT NULL")
-    elif status == "no_pdf":
-        conditions.append("dp.pdf_path IS NULL")
+    # Support comma-separated multi-filter
+    filters = [f.strip() for f in status.split(",") if f.strip() and f.strip() != "all"]
+    for f in filters:
+        if f == "pending":
+            conditions.append("pr3.decision IS NULL")
+        elif f == "include":
+            conditions.append("pr3.decision = 'include'")
+        elif f == "exclude":
+            conditions.append("pr3.decision = 'exclude'")
+        elif f == "coding":
+            conditions.append("pr3.decision = 'include' AND pr3.coding_status = 'coding'")
+        elif f == "complete":
+            conditions.append("pr3.decision = 'include' AND pr3.coding_status = 'complete'")
+        elif f == "has_pdf":
+            conditions.append("dp.pdf_path IS NOT NULL")
+        elif f == "no_pdf":
+            conditions.append("dp.pdf_path IS NULL")
 
     if conditions:
         query += " WHERE " + " AND ".join(conditions)
 
-    query += " ORDER BY d.title"
+    sort_map = {
+        "title": "d.title",
+        "year": "COALESCE(a.year, ip.year, ib.year) DESC",
+        "id": "d.id",
+    }
+    query += f" ORDER BY {sort_map.get(sort, 'd.title')}"
 
     rows = conn.execute(query, params).fetchall()
     return [dict(r) for r in rows]
@@ -252,7 +267,7 @@ def create_code(
 
 
 def update_code(conn: sqlite3.Connection, code_id: int, **kwargs) -> dict | None:
-    allowed = {"name", "description", "color", "sort_order", "parent_id"}
+    allowed = {"name", "description", "color", "sort_order", "parent_id", "code_type"}
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
         return None
@@ -510,6 +525,21 @@ def create_column_option(
     return dict(conn.execute(
         "SELECT * FROM matrix_column_option WHERE id = ?", (cursor.lastrowid,)
     ).fetchone())
+
+
+def update_column_option(conn: sqlite3.Connection, option_id: int, **kwargs) -> dict | None:
+    allowed = {"value", "sort_order"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if not updates:
+        return None
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    conn.execute(
+        f"UPDATE matrix_column_option SET {set_clause} WHERE id = ?",
+        (*updates.values(), option_id)
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM matrix_column_option WHERE id = ?", (option_id,)).fetchone()
+    return dict(row) if row else None
 
 
 def delete_column_option(conn: sqlite3.Connection, option_id: int) -> bool:
@@ -844,6 +874,19 @@ def get_paper_note(conn: sqlite3.Connection, doc_id: int) -> str:
         "SELECT content FROM paper_note WHERE document_id = ?", (doc_id,)
     ).fetchone()
     return row["content"] if row else ""
+
+
+def get_all_settings(conn: sqlite3.Connection) -> dict:
+    rows = conn.execute("SELECT key, value FROM user_settings").fetchall()
+    return {row["key"]: row["value"] for row in rows}
+
+
+def save_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute(
+        "INSERT INTO user_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?",
+        (key, value, value),
+    )
+    conn.commit()
 
 
 def save_paper_note(conn: sqlite3.Connection, doc_id: int, content: str) -> None:

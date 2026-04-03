@@ -59,6 +59,26 @@ const workspace = useWorkspaceStore()
       :disabled="!workspace.reviewForm.decision"
       @click="workspace.saveReview()"
     >Save Review</button>
+    <div v-show="workspace.activePaper?.phase3_decision === 'include'" class="space-y-2 pt-2 border-t border-base-300">
+      <label class="text-sm font-semibold uppercase opacity-70">Coding Status</label>
+      <div class="flex gap-1">
+        <button
+          class="btn btn-xs flex-1"
+          :class="!workspace.activePaper?.coding_status ? 'btn-info' : 'btn-ghost'"
+          @click="workspace.setCodingStatus(null)"
+        >Included</button>
+        <button
+          class="btn btn-xs flex-1"
+          :class="workspace.activePaper?.coding_status === 'coding' ? 'btn-warning' : 'btn-ghost'"
+          @click="workspace.setCodingStatus('coding')"
+        >In Progress</button>
+        <button
+          class="btn btn-xs flex-1"
+          :class="workspace.activePaper?.coding_status === 'complete' ? 'btn-success' : 'btn-ghost'"
+          @click="workspace.setCodingStatus('complete')"
+        >Complete</button>
+      </div>
+    </div>
     <div v-show="workspace.activePaper && !workspace.activePaper.pdf_path" class="pt-2">
       <label class="btn btn-sm btn-outline w-full gap-2">
         Upload PDF

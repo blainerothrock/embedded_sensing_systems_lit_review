@@ -10,6 +10,7 @@ export const useMatrixStore = defineStore('matrix', () => {
   const codingCompleteness = ref({})
 
   // Column editor form state
+  const matrixStatusFilter = ref('included')
   const newColumnName = ref('')
   const newColumnType = ref('enum_single')
   const newOptionValues = ref({})
@@ -23,11 +24,16 @@ export const useMatrixStore = defineStore('matrix', () => {
   }
 
   async function loadMatrixData() {
-    matrixData.value = await api.matrix.data()
+    const params = {}
+    if (matrixStatusFilter.value !== 'all') params.status = matrixStatusFilter.value
+    matrixData.value = await api.matrix.data(params)
   }
 
   async function loadPaperCells(paperId) {
-    paperMatrixCells.value = await api.matrix.paperCells(paperId)
+    paperMatrixCells.value = {}
+    if (paperId) {
+      paperMatrixCells.value = await api.matrix.paperCells(paperId)
+    }
   }
 
   async function loadCompleteness() {
@@ -74,6 +80,18 @@ export const useMatrixStore = defineStore('matrix', () => {
     try { return JSON.parse(val || '[]') } catch { return [] }
   }
 
+  function randomColor() {
+    const hue = Math.floor(Math.random() * 360)
+    const s = 65, l = 55
+    const a = (s / 100) * Math.min(l / 100, 1 - l / 100)
+    const f = n => {
+      const k = (n + hue / 30) % 12
+      const c = l / 100 - a * Math.max(Math.min(k - 3, 9 - k, 1), -1)
+      return Math.round(255 * c).toString(16).padStart(2, '0')
+    }
+    return `#${f(0)}${f(8)}${f(4)}`
+  }
+
   // Column CRUD
   async function createColumn() {
     const ui = useUiStore()
@@ -81,6 +99,7 @@ export const useMatrixStore = defineStore('matrix', () => {
     await api.matrixColumns.create({
       name: newColumnName.value.trim(),
       column_type: newColumnType.value,
+      color: randomColor(),
     })
     newColumnName.value = ''
     await loadColumns()
@@ -107,8 +126,27 @@ export const useMatrixStore = defineStore('matrix', () => {
     await loadColumns()
   }
 
+  async function updateOption(optId, data) {
+    await api.matrixColumns.updateOption(optId, data)
+    await loadColumns()
+  }
+
   async function deleteOption(optId) {
     await api.matrixColumns.deleteOption(optId)
+    await loadColumns()
+  }
+
+  async function reorderOption(colId, optId, direction) {
+    const col = matrixColumns.value.find(c => c.id === colId)
+    if (!col) return
+    const opts = col.options
+    const idx = opts.findIndex(o => o.id === optId)
+    const swapIdx = idx + direction
+    if (swapIdx < 0 || swapIdx >= opts.length) return
+    await Promise.all([
+      api.matrixColumns.updateOption(opts[idx].id, { sort_order: swapIdx }),
+      api.matrixColumns.updateOption(opts[swapIdx].id, { sort_order: idx }),
+    ])
     await loadColumns()
   }
 
@@ -123,11 +161,11 @@ export const useMatrixStore = defineStore('matrix', () => {
   }
 
   return {
-    matrixColumns, matrixData, paperMatrixCells, codingCompleteness,
+    matrixColumns, matrixData, matrixStatusFilter, paperMatrixCells, codingCompleteness,
     newColumnName, newColumnType, newOptionValues,
     loadColumns, loadMatrixData, loadPaperCells, loadCompleteness,
     saveMatrixCell, savePaperMatrixCell, toggleMultiValue, parseMultiValue,
     createColumn, updateColumn, deleteColumn,
-    addOption, deleteOption, linkCode, unlinkCode,
+    addOption, updateOption, reorderOption, deleteOption, linkCode, unlinkCode,
   }
 })

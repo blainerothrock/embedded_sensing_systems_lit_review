@@ -27,6 +27,13 @@ export function useKeyboard() {
       return
     }
 
+    // Ctrl+F / Cmd+F — PDF search
+    if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+      e.preventDefault()
+      document.dispatchEvent(new CustomEvent('pdf-search-open'))
+      return
+    }
+
     if (isTyping) return
 
     // Mode shortcuts

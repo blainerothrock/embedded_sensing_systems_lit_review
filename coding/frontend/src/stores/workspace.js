@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { api } from '@/api'
 import { useUiStore } from './ui'
 
@@ -9,7 +9,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const activePaperId = ref(null)
   const activePaper = ref(null)
   const searchQuery = ref('')
-  const statusFilter = ref('all')
+  const statusFilter = ref(localStorage.getItem('statusFilter') || 'all')
+  const sortBy = ref(localStorage.getItem('sortBy') || 'title')
+
+  watch(statusFilter, (v) => localStorage.setItem('statusFilter', v))
+  watch(sortBy, (v) => localStorage.setItem('sortBy', v))
   const exclusionCodes = ref([])
   const stats = ref(null)
 
@@ -95,7 +99,17 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const params = {}
     if (searchQuery.value) params.search = searchQuery.value
     if (statusFilter.value !== 'all') params.status = statusFilter.value
+    if (sortBy.value !== 'title') params.sort = sortBy.value
     papers.value = await api.papers.list(params)
+  }
+
+  function shufflePapers() {
+    const arr = [...papers.value]
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[arr[i], arr[j]] = [arr[j], arr[i]]
+    }
+    papers.value = arr
   }
 
   async function loadExclusionCodes() {
@@ -112,6 +126,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
 
     activePaperId.value = id
+    localStorage.setItem('activePaperId', id)
     const paper = await api.papers.get(id)
     activePaper.value = paper
 
@@ -164,6 +179,15 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     } else {
       ui.showToast(data.error || 'Save failed', 'error')
     }
+  }
+
+  async function setCodingStatus(status) {
+    const ui = useUiStore()
+    if (!activePaperId.value) return
+    await api.papers.setCodingStatus(activePaperId.value, status)
+    if (activePaper.value) activePaper.value.coding_status = status
+    await loadPapers()
+    ui.showToast(`Status: ${status || 'included'}`, 'success')
   }
 
   function toggleExclusionCode(id) {
@@ -247,6 +271,55 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     addingRegionTo.value = null
     await loadAnnotations()
     activeAnnotationId.value = annId
+  }
+
+  async function deleteRegion(regionIndex) {
+    const ann = activeAnnotation.value
+    if (!ann) return
+    const rects = JSON.parse(ann.rects_json || '[]')
+    const isArea = ann.annotation_type === 'area'
+
+    if (isArea) {
+      // Group rects by page, remove the group at regionIndex
+      const pageGroups = {}
+      const pageOrder = []
+      for (const r of rects) {
+        const page = r.page || ann.page_number
+        if (!pageGroups[page]) { pageGroups[page] = []; pageOrder.push(page) }
+        pageGroups[page].push(r)
+      }
+      pageOrder.sort((a, b) => a - b)
+      const pageToRemove = pageOrder[regionIndex]
+      const newRects = rects.filter(r => (r.page || ann.page_number) !== pageToRemove)
+      if (newRects.length === 0) {
+        await deleteAnnotation(ann.id)
+        return
+      }
+      await updateAnnotation(ann.id, { rects_json: JSON.stringify(newRects) })
+    } else {
+      // Text: remove the regionIndex-th text segment and its rects
+      const texts = (ann.selected_text || '').split(' ... ').filter(t => t.trim())
+      const pageGroups = {}
+      const pageOrder = []
+      for (const r of rects) {
+        const page = r.page || ann.page_number
+        if (!pageGroups[page]) { pageGroups[page] = []; pageOrder.push(page) }
+        pageGroups[page].push(r)
+      }
+      pageOrder.sort((a, b) => a - b)
+
+      if (texts.length <= 1 || pageOrder.length <= 1) {
+        await deleteAnnotation(ann.id)
+        return
+      }
+      const pageToRemove = pageOrder[Math.min(regionIndex, pageOrder.length - 1)]
+      const newRects = rects.filter(r => (r.page || ann.page_number) !== pageToRemove)
+      texts.splice(regionIndex, 1)
+      await updateAnnotation(ann.id, {
+        rects_json: JSON.stringify(newRects),
+        selected_text: texts.join(' ... '),
+      })
+    }
   }
 
   function toggleAnnotationCode(codeId) {
@@ -342,7 +415,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   return {
     // State
     papers, activePaperId, activePaper,
-    searchQuery, statusFilter, exclusionCodes, stats,
+    searchQuery, statusFilter, sortBy, exclusionCodes, stats,
     reviewForm, isReviewDirty,
     annotations, activeAnnotationId, activeAnnotation, annotationRegions,
     pendingSelection, selectedAnnotationCodes, addingRegionTo,
@@ -350,13 +423,13 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     showCodePicker, codePickerSearch,
     paperNote, paperSummary, currentPaperIndex,
     // Actions
-    loadPapers, loadExclusionCodes, loadStats,
+    loadPapers, shufflePapers, loadExclusionCodes, loadStats,
     selectPaper, nextPaper, prevPaper,
-    saveReview, toggleExclusionCode,
+    saveReview, setCodingStatus, toggleExclusionCode,
     loadAnnotations, createAnnotation, deleteAnnotation, updateAnnotation,
     addAnnotationCode, removeAnnotationCode,
     saveAnnotationCodeNote, saveAnnotationNote,
-    appendRegionToAnnotation, toggleAnnotationCode,
+    appendRegionToAnnotation, deleteRegion, toggleAnnotationCode,
     cancelAnnotation, confirmAnnotation, startAddRegion,
     loadPaperSummary, loadPaperNote, savePaperNote, uploadPdf,
   }

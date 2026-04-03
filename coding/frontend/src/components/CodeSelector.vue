@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, reactive } from 'vue'
 import { useCodebookStore } from '@/stores/codebook'
 
 const props = defineProps({
@@ -10,6 +10,15 @@ const emit = defineEmits(['select', 'close'])
 
 const codebook = useCodebookStore()
 const search = ref('')
+const newSubNames = reactive({})
+
+async function createAndSelect(parentId) {
+  const name = newSubNames[parentId]?.trim()
+  if (!name) return
+  const newCode = await codebook.createSubCodeAndReturn(parentId, name)
+  newSubNames[parentId] = ''
+  if (newCode) emit('select', newCode.id)
+}
 </script>
 
 <template>
@@ -53,6 +62,19 @@ const search = ref('')
               <span>{{ sub.name }}</span>
             </button>
           </template>
+          <!-- Inline sub-code creation -->
+          <div class="flex items-center gap-1 ml-4 mt-0.5">
+            <input
+              type="text"
+              class="input input-xs flex-1 bg-base-200"
+              placeholder="+ sub-code..."
+              :value="newSubNames[topCode.id] || ''"
+              @input="newSubNames[topCode.id] = $event.target.value"
+              @keydown.enter.stop="createAndSelect(topCode.id)"
+              @keydown.escape.stop="emit('close')"
+            >
+            <button class="btn btn-ghost btn-xs btn-square text-primary" @click="createAndSelect(topCode.id)">+</button>
+          </div>
         </div>
       </template>
     </div>

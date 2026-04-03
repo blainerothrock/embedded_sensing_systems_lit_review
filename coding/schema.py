@@ -16,6 +16,9 @@ def migrate(conn: sqlite3.Connection) -> None:
     _create_matrix_column_tables(conn)
     _create_chat_tables(conn)
     _create_paper_notes(conn)
+    _migrate_code_type(conn)
+    _migrate_coding_status(conn)
+    _create_user_settings(conn)
     conn.commit()
 
 
@@ -305,6 +308,34 @@ def _create_chat_tables(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_chat_message_chat ON chat_message(chat_id)"
     )
+
+
+def _migrate_coding_status(conn: sqlite3.Connection) -> None:
+    """Add coding_status column to pass_review for Phase 3 progress tracking."""
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(pass_review)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if "coding_status" not in columns:
+        conn.execute("ALTER TABLE pass_review ADD COLUMN coding_status TEXT")
+
+
+def _create_user_settings(conn: sqlite3.Connection) -> None:
+    """Create key-value table for persisting UI settings."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+
+
+def _migrate_code_type(conn: sqlite3.Connection) -> None:
+    """Add code_type column to code table if it doesn't exist."""
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(code)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if "code_type" not in columns:
+        conn.execute("ALTER TABLE code ADD COLUMN code_type TEXT")
 
 
 def _create_paper_notes(conn: sqlite3.Connection) -> None:

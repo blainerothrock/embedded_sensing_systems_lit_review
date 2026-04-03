@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, nextTick, onMounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useUiStore } from '@/stores/ui'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useCodebookStore } from '@/stores/codebook'
@@ -15,14 +15,148 @@ const pdf = usePdf()
 const pdfContainer = ref(null)
 const pdfPages = ref(null)
 const dragOver = ref(false)
+const toolbarSearchInput = ref(null)
+const focusedCodeIndex = ref(-1)
+
+// PDF search
+const pdfSearchQuery = ref('')
+const pdfSearchInput = ref(null)
+const searchMatches = ref([])
+const currentMatchIndex = ref(-1)
+const showSearch = ref(false)
+
+function performSearch() {
+  // Clear previous highlights
+  document.querySelectorAll('.pdf-search-match').forEach(el => el.classList.remove('pdf-search-match'))
+  searchMatches.value = []
+  currentMatchIndex.value = -1
+
+  const query = pdfSearchQuery.value.trim().toLowerCase()
+  if (!query) return
+
+  const spans = document.querySelectorAll('.textLayer span')
+  const matches = []
+  spans.forEach(span => {
+    if (span.textContent.toLowerCase().includes(query)) {
+      span.classList.add('pdf-search-match')
+      matches.push(span)
+    }
+  })
+  searchMatches.value = matches
+  if (matches.length > 0) {
+    currentMatchIndex.value = 0
+    scrollToMatch(0)
+  }
+}
+
+function scrollToMatch(idx) {
+  // Remove active highlight from previous
+  document.querySelectorAll('.pdf-search-active').forEach(el => el.classList.remove('pdf-search-active'))
+  if (idx >= 0 && idx < searchMatches.value.length) {
+    const span = searchMatches.value[idx]
+    span.classList.add('pdf-search-active')
+    span.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+}
+
+function nextMatch() {
+  if (searchMatches.value.length === 0) return
+  currentMatchIndex.value = (currentMatchIndex.value + 1) % searchMatches.value.length
+  scrollToMatch(currentMatchIndex.value)
+}
+
+function prevMatch() {
+  if (searchMatches.value.length === 0) return
+  currentMatchIndex.value = (currentMatchIndex.value - 1 + searchMatches.value.length) % searchMatches.value.length
+  scrollToMatch(currentMatchIndex.value)
+}
+
+function clearSearch() {
+  pdfSearchQuery.value = ''
+  document.querySelectorAll('.pdf-search-match, .pdf-search-active').forEach(el => {
+    el.classList.remove('pdf-search-match', 'pdf-search-active')
+  })
+  searchMatches.value = []
+  currentMatchIndex.value = -1
+  showSearch.value = false
+}
+
+function onSearchKeydown(e) {
+  if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); prevMatch() }
+  else if (e.key === 'Enter') { e.preventDefault(); nextMatch() }
+  else if (e.key === 'Escape') { clearSearch() }
+}
+
+function openSearch() {
+  showSearch.value = true
+  nextTick(() => pdfSearchInput.value?.focus())
+}
+
+onMounted(() => document.addEventListener('pdf-search-open', openSearch))
+onUnmounted(() => document.removeEventListener('pdf-search-open', openSearch))
+
+// Flat list of visible codes for keyboard navigation
+const visibleCodes = computed(() => {
+  const list = []
+  for (const code of codebook.codes) {
+    if (!codebook.codeMatchesSearch(code, workspace.annotationToolbarSearch)) continue
+    list.push({ id: code.id, name: code.name, isParent: true })
+    for (const sub of code.children || []) {
+      if (codebook.subCodeMatchesSearch(sub, code, workspace.annotationToolbarSearch)) {
+        list.push({ id: sub.id, name: sub.name, isParent: false })
+      }
+    }
+  }
+  return list
+})
+
+// Auto-focus search when toolbar opens
+watch(() => workspace.showAnnotationToolbar, (show) => {
+  if (show) {
+    focusedCodeIndex.value = -1
+    nextTick(() => toolbarSearchInput.value?.focus())
+  }
+})
+
+function onToolbarKeydown(e) {
+  const codes = visibleCodes.value
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    focusedCodeIndex.value = Math.min(focusedCodeIndex.value + 1, codes.length - 1)
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    focusedCodeIndex.value = Math.max(focusedCodeIndex.value - 1, -1)
+  } else if (e.key === ' ' && focusedCodeIndex.value >= 0) {
+    e.preventDefault()
+    workspace.toggleAnnotationCode(codes[focusedCodeIndex.value].id)
+  } else if (e.key === 'Enter') {
+    e.preventDefault()
+    workspace.confirmAnnotation()
+  }
+}
 
 // Watch for paper selection changes
-watch(() => workspace.activePaper, async (paper) => {
-  if (!paper) return
+// Use activePaperId (set synchronously) + wait for activePaper (set async)
+let currentlyLoadingId = null
+watch(() => workspace.activePaperId, async (id) => {
+  if (!id) return
+  currentlyLoadingId = id
+  // Wait for the async paper data to arrive
+  // activePaper is set after the API call in selectPaper()
+  let attempts = 0
+  while (workspace.activePaper?.id !== id && attempts < 20) {
+    await new Promise(r => setTimeout(r, 50))
+    attempts++
+  }
+  // Bail if another paper was selected while we waited
+  if (currentlyLoadingId !== id) return
+  const paper = workspace.activePaper
+  if (!paper || paper.id !== id) return
+  await nextTick()
+  if (!pdfPages.value) return
   if (paper.pdf_path) {
-    await nextTick()
     await pdf.loadPdf(paper.id, pdfPages.value)
-    await pdf.fitWidth(pdfContainer.value)
+    if (!ui.userSetZoom) await pdf.fitWidth(pdfContainer.value)
     await pdf.renderAllPages(pdfPages.value)
     pdf.renderAnnotationOverlays(workspace.annotations)
   } else {
@@ -52,14 +186,19 @@ function startHandPan(event) {
   const startY = event.clientY
   const startScrollLeft = container.scrollLeft
   const startScrollTop = container.scrollTop
+  let moved = false
 
   const onMove = (e) => {
+    const dx = Math.abs(e.clientX - startX)
+    const dy = Math.abs(e.clientY - startY)
+    if (dx > 3 || dy > 3) moved = true
     container.scrollLeft = startScrollLeft - (e.clientX - startX)
     container.scrollTop = startScrollTop - (e.clientY - startY)
   }
-  const onUp = () => {
+  const onUp = (e) => {
     document.removeEventListener('mousemove', onMove)
     document.removeEventListener('mouseup', onUp)
+    if (!moved) checkAnnotationClick(e)
   }
   document.addEventListener('mousemove', onMove)
   document.addEventListener('mouseup', onUp)
@@ -100,6 +239,13 @@ function onTextSelection(event) {
       w: Math.abs(px2 - px1),
       h: Math.abs(py2 - py1),
     })
+  }
+
+  // If adding region to existing annotation, skip the code picker
+  if (workspace.addingRegionTo) {
+    workspace.appendRegionToAnnotation(workspace.addingRegionTo, pdfRects, pageNumber, text)
+    window.getSelection()?.removeAllRanges()
+    return
   }
 
   workspace.pendingSelection = { text, rects: pdfRects, pageNumber }
@@ -214,16 +360,38 @@ function onScroll() {
   pdf.onScroll(pdfContainer.value)
 }
 
+function captureViewCenter() {
+  const c = pdfContainer.value
+  if (!c) return null
+  return {
+    contentX: (c.scrollLeft + c.clientWidth / 2) / ui.pdfScale,
+    contentY: (c.scrollTop + c.clientHeight / 2) / ui.pdfScale,
+  }
+}
+
+function restoreViewCenter(anchor) {
+  if (!anchor || !pdfContainer.value) return
+  const c = pdfContainer.value
+  c.scrollLeft = anchor.contentX * ui.pdfScale - c.clientWidth / 2
+  c.scrollTop = anchor.contentY * ui.pdfScale - c.clientHeight / 2
+}
+
 async function zoomIn() {
+  ui.userSetZoom = true
+  const anchor = captureViewCenter()
   ui.pdfScale = Math.min(ui.pdfScale + 0.25, 4.0)
   await pdf.renderAllPages(pdfPages.value)
   pdf.renderAnnotationOverlays(workspace.annotations)
+  restoreViewCenter(anchor)
 }
 
 async function zoomOut() {
+  ui.userSetZoom = true
+  const anchor = captureViewCenter()
   ui.pdfScale = Math.max(ui.pdfScale - 0.25, 0.5)
   await pdf.renderAllPages(pdfPages.value)
   pdf.renderAnnotationOverlays(workspace.annotations)
+  restoreViewCenter(anchor)
 }
 
 async function fitWidth() {
@@ -248,12 +416,40 @@ function handleFileInput(event) {
 
 <template>
   <div class="relative h-full flex flex-col">
+    <!-- Adding region banner -->
+    <div
+      v-if="workspace.addingRegionTo"
+      class="bg-warning text-warning-content px-3 py-1.5 text-xs font-medium flex items-center justify-center gap-2 shrink-0 z-20"
+    >
+      Adding region — select text or draw a box
+      <button class="btn btn-xs btn-ghost" @click="workspace.addingRegionTo = null">Cancel</button>
+    </div>
+
+    <!-- PDF Search bar -->
+    <div v-if="showSearch" class="flex items-center gap-2 px-3 py-1.5 bg-base-200 border-b border-base-300 shrink-0">
+      <input
+        ref="pdfSearchInput"
+        type="text"
+        class="input input-xs flex-1"
+        placeholder="Search in PDF..."
+        v-model="pdfSearchQuery"
+        @input="performSearch()"
+        @keydown="onSearchKeydown"
+      >
+      <span class="text-xs opacity-50 min-w-12 text-center">
+        {{ searchMatches.length > 0 ? `${currentMatchIndex + 1}/${searchMatches.length}` : '0/0' }}
+      </span>
+      <button class="btn btn-ghost btn-xs btn-square" @click="prevMatch()" title="Previous (Shift+Enter)">▲</button>
+      <button class="btn btn-ghost btn-xs btn-square" @click="nextMatch()" title="Next (Enter)">▼</button>
+      <button class="btn btn-ghost btn-xs btn-square" @click="clearSearch()">✕</button>
+    </div>
+
     <!-- PDF Container -->
     <div
       v-if="workspace.activePaper"
       ref="pdfContainer"
       class="flex-1 overflow-auto bg-base-300 p-4"
-      :class="{ 'cursor-grab': ui.pdfMode === 'hand' }"
+      :class="{ 'cursor-grab': ui.pdfMode === 'hand', 'cursor-copy': workspace.addingRegionTo }"
       @mousedown="onMouseDown"
       @mouseup="onTextSelection"
       @wheel="onWheel"
@@ -298,22 +494,40 @@ function handleFileInput(event) {
     <div
       v-if="workspace.showAnnotationToolbar"
       class="absolute top-4 left-1/2 -translate-x-1/2 z-30 bg-base-200 rounded-lg border border-base-300 shadow-xl p-3 w-72"
+      @keydown="onToolbarKeydown"
     >
       <p class="text-xs font-medium mb-2">Tag annotation with codes:</p>
       <input
+        ref="toolbarSearchInput"
         type="text"
-        placeholder="Search codes..."
+        placeholder="Search codes... (↑↓ navigate, space toggle, enter save)"
         class="input input-xs input-bordered w-full mb-2"
         v-model="workspace.annotationToolbarSearch"
       >
       <div class="max-h-48 overflow-y-auto space-y-1">
         <template v-for="code in codebook.codes" :key="code.id">
           <div v-if="codebook.codeMatchesSearch(code, workspace.annotationToolbarSearch)">
-            <div class="text-xs font-medium opacity-50 px-1 pt-1">{{ code.name }}</div>
+            <label
+              class="flex items-center gap-2 px-1 pt-1 rounded cursor-pointer hover:bg-base-300"
+              :class="{ 'bg-base-300': visibleCodes[focusedCodeIndex]?.id === code.id }"
+            >
+              <input
+                type="checkbox"
+                class="checkbox checkbox-xs"
+                :checked="workspace.selectedAnnotationCodes.includes(code.id)"
+                @change="workspace.toggleAnnotationCode(code.id)"
+              >
+              <span
+                class="w-2 h-2 rounded-full"
+                :style="{ background: code.color || '#888' }"
+              ></span>
+              <span class="text-xs font-medium">{{ code.name }}</span>
+            </label>
             <template v-for="sub in code.children || []" :key="sub.id">
               <label
                 v-if="codebook.subCodeMatchesSearch(sub, code, workspace.annotationToolbarSearch)"
-                class="flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-base-300"
+                class="flex items-center gap-2 px-2 py-1 pl-6 rounded cursor-pointer hover:bg-base-300"
+                :class="{ 'bg-base-300': visibleCodes[focusedCodeIndex]?.id === sub.id }"
               >
                 <input
                   type="checkbox"
