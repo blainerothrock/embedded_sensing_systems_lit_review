@@ -129,16 +129,33 @@ function handleKeydown(e) {
       </div>
       <!-- Params (expandable) -->
       <div v-if="chat.showParams && chat.provider === 'ollama'" class="grid grid-cols-2 gap-1.5">
-        <label v-for="(val, key) in chat.params" :key="key" class="flex flex-col">
-          <span class="text-xs opacity-40">{{ key }}</span>
-          <input
-            type="number"
-            class="input input-xs w-full bg-base-300"
-            :value="val"
-            :step="key === 'temperature' || key === 'top_p' || key === 'presence_penalty' ? 0.1 : 1"
-            @change="chat.params[key] = parseFloat($event.target.value)"
-          >
-        </label>
+        <template v-for="(val, key) in chat.params" :key="key">
+          <label v-if="key === 'num_ctx' || key === 'num_predict'" class="flex flex-col">
+            <span class="text-xs opacity-40">{{ key }}</span>
+            <select
+              class="select select-xs w-full bg-base-300"
+              :value="val"
+              @change="chat.params[key] = parseInt($event.target.value)"
+            >
+              <template v-if="key === 'num_ctx'">
+                <option v-for="v in [2048, 4096, 8192, 16384, 32768, 65536, 131072]" :key="v" :value="v">{{ v.toLocaleString() }}</option>
+              </template>
+              <template v-else>
+                <option v-for="v in [512, 1024, 2048, 4096, 8192]" :key="v" :value="v">{{ v.toLocaleString() }}</option>
+              </template>
+            </select>
+          </label>
+          <label v-else class="flex flex-col">
+            <span class="text-xs opacity-40">{{ key }}</span>
+            <input
+              type="number"
+              class="input input-xs w-full bg-base-300"
+              :value="val"
+              :step="key === 'temperature' || key === 'top_p' || key === 'presence_penalty' ? 0.1 : 1"
+              @change="chat.params[key] = parseFloat($event.target.value)"
+            >
+          </label>
+        </template>
       </div>
       <!-- Conversation selector -->
       <div v-if="chat.chatList.length >= 1" class="flex gap-1 items-center">
@@ -157,6 +174,10 @@ function handleKeydown(e) {
           </svg>
         </button>
       </div>
+      <!-- Prompt size estimate -->
+      <div v-if="chat.promptTokenEstimate && chat.provider === 'ollama'" class="text-[10px] opacity-40">
+        prompt ~{{ chat.promptTokenEstimate.toLocaleString() }} tokens ({{ Math.round((chat.promptTokenEstimate / chat.params.num_ctx) * 100) }}% of {{ chat.params.num_ctx.toLocaleString() }} ctx)
+      </div>
     </div>
 
     <!-- Messages -->
@@ -167,14 +188,22 @@ function handleKeydown(e) {
             {{ msg.content }}
           </div>
         </div>
-        <div v-else class="bg-base-300 rounded px-3 py-2 text-xs leading-relaxed max-w-[92%]" v-html="chat.renderChatContent(msg.content)">
+        <div v-else class="chat-md bg-base-300 rounded px-3 py-2 text-xs leading-relaxed max-w-[92%]" v-html="chat.renderChatContent(msg.content)">
         </div>
       </template>
       <!-- Streaming -->
-      <div v-if="chat.streamContent" class="bg-base-300 rounded px-3 py-2 text-xs leading-relaxed max-w-[92%]" v-html="chat.renderChatContent(chat.streamContent)">
+      <div v-if="chat.streamContent" class="chat-md bg-base-300 rounded px-3 py-2 text-xs leading-relaxed max-w-[92%]" v-html="chat.renderChatContent(chat.streamContent)">
       </div>
       <div v-if="chat.loading && !chat.streamContent" class="flex gap-1 opacity-50">
         <span class="loading loading-dots loading-xs"></span>
+      </div>
+      <!-- Ollama generation metrics -->
+      <div v-if="chat.metrics && chat.provider === 'ollama'" class="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] opacity-40 px-1">
+        <span v-if="chat.metrics.ttft">TTFT {{ chat.metrics.ttft }}s</span>
+        <span v-if="chat.metrics.tokPerSec">{{ chat.metrics.tokPerSec }} tok/s</span>
+        <span v-if="chat.metrics.outputTokens">{{ chat.metrics.outputTokens }} tokens</span>
+        <span v-if="chat.metrics.contextTokens">ctx {{ chat.metrics.contextTokens.toLocaleString() }} ({{ chat.metrics.contextPct }}%)</span>
+        <span v-if="chat.metrics.totalTime">total {{ chat.metrics.totalTime }}s</span>
       </div>
     </div>
 

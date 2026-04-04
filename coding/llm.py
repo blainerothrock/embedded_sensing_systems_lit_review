@@ -8,7 +8,7 @@ from threading import Thread
 DEFAULT_OLLAMA_PARAMS = {
     "num_ctx": 32768,
     "num_predict": 2048,
-    "temperature": 0.6,
+    "temperature": 0.0,
     "top_k": 20,
     "top_p": 0.95,
     "presence_penalty": 1.5,
@@ -28,8 +28,11 @@ def get_ollama_models() -> list[str]:
 def stream_ollama(
     model: str, system: str, messages: list[dict],
     params: dict | None = None,
-) -> Iterator[str]:
-    """Stream response from Ollama with configurable params."""
+) -> Iterator[str | dict]:
+    """Stream response from Ollama with configurable params.
+
+    Yields str chunks during generation, then a dict with metrics from the final chunk.
+    """
     import ollama
 
     opts = {**DEFAULT_OLLAMA_PARAMS, **(params or {})}
@@ -44,6 +47,16 @@ def stream_ollama(
         text = chunk.message.content
         if text:
             yield text
+        # Final chunk has done=True and metrics
+        if getattr(chunk, "done", False):
+            metrics = {}
+            for key in ("prompt_eval_count", "prompt_eval_duration",
+                        "eval_count", "eval_duration", "total_duration"):
+                val = getattr(chunk, key, None)
+                if val is not None:
+                    metrics[key] = val
+            if metrics:
+                yield metrics
 
 
 def stream_claude(system: str, messages: list[dict]) -> Iterator[str]:

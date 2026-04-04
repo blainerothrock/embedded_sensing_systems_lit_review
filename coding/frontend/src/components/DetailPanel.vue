@@ -205,8 +205,18 @@ function getEvidenceForColumn(column) {
                 <span>{{ opt.value }}</span>
               </label>
             </div>
+            <!-- checkbox -->
+            <label v-else-if="col.column_type === 'checkbox'" class="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                class="checkbox checkbox-sm"
+                :checked="matrix.paperMatrixCells[col.id]?.value === 'true'"
+                @change="matrix.savePaperMatrixCell(workspace.activePaperId, col.id, $event.target.checked ? 'true' : 'false')"
+              >
+              <span class="text-sm">{{ matrix.paperMatrixCells[col.id]?.value === 'true' ? 'Yes' : 'No' }}</span>
+            </label>
             <!-- Inline add option (for enum types) -->
-            <div v-if="col.column_type !== 'text'" class="flex gap-1 mt-1">
+            <div v-if="col.column_type === 'enum_single' || col.column_type === 'enum_multi'" class="flex gap-1 mt-1">
               <input
                 type="text"
                 placeholder="+ option..."

@@ -16,6 +16,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     _create_matrix_column_tables(conn)
     _create_chat_tables(conn)
     _create_paper_notes(conn)
+    _migrate_matrix_column_checkbox(conn)
     _migrate_code_type(conn)
     _migrate_coding_status(conn)
     _create_user_settings(conn)
@@ -209,7 +210,7 @@ def _create_matrix_column_tables(conn: sqlite3.Connection) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             description TEXT DEFAULT '',
-            column_type TEXT NOT NULL CHECK(column_type IN ('enum_single', 'enum_multi', 'text')),
+            column_type TEXT NOT NULL CHECK(column_type IN ('enum_single', 'enum_multi', 'text', 'checkbox')),
             sort_order INTEGER DEFAULT 0,
             color TEXT DEFAULT '#FFEB3B',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -336,6 +337,42 @@ def _migrate_code_type(conn: sqlite3.Connection) -> None:
     columns = [row[1] for row in cursor.fetchall()]
     if "code_type" not in columns:
         conn.execute("ALTER TABLE code ADD COLUMN code_type TEXT")
+
+
+def _migrate_matrix_column_checkbox(conn: sqlite3.Connection) -> None:
+    """Add 'checkbox' to matrix_column.column_type CHECK constraint.
+
+    SQLite doesn't support ALTER CHECK, so we recreate the table.
+    """
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='matrix_column'"
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return
+    if "checkbox" in row[0]:
+        return  # already migrated
+
+    cursor.execute("PRAGMA foreign_keys = OFF")
+    cursor.execute("""
+        CREATE TABLE matrix_column_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            column_type TEXT NOT NULL CHECK(column_type IN ('enum_single', 'enum_multi', 'text', 'checkbox')),
+            sort_order INTEGER DEFAULT 0,
+            color TEXT DEFAULT '#FFEB3B',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("""
+        INSERT INTO matrix_column_new (id, name, description, column_type, sort_order, color, created_at)
+        SELECT id, name, description, column_type, sort_order, color, created_at FROM matrix_column
+    """)
+    cursor.execute("DROP TABLE matrix_column")
+    cursor.execute("ALTER TABLE matrix_column_new RENAME TO matrix_column")
+    cursor.execute("PRAGMA foreign_keys = ON")
 
 
 def _create_paper_notes(conn: sqlite3.Connection) -> None:

@@ -20,10 +20,12 @@ function wordCount(text) {
 }
 
 function goBack() {
+  workspace.addingRegionTo = null
   workspace.activeAnnotationId = null
 }
 
 function openDetail(annotation) {
+  workspace.addingRegionTo = null
   annotationReturnTab.value = null
   workspace.activeAnnotationId = annotation.id
 }

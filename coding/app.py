@@ -422,10 +422,13 @@ def _build_system_prompt(conn, doc_id: int) -> str:
     parts = [
         "You are a research assistant helping with qualitative coding of an academic paper.",
         "You have the full text of the paper below.",
+        "Format responses using markdown (headers, lists, tables, bold, etc.). Do not use LaTeX notation — use plain text arrows (→) and symbols instead.",
         "",
-        "When referencing specific passages, use page references: [[p.{page_number}]]",
-        "When quoting directly from the paper, use this format: [[quote:\"exact text from paper\" p.{page_number}]]",
-        "The quote text should be a short exact excerpt (1-2 sentences max). Examples:",
+        "When referencing specific passages, use page references: [[p.{page_number}]] where page_number is an integer (e.g. [[p.5]], NOT section numbers like p.4.1).",
+        "For multiple pages, use separate refs: [[p.9]] [[p.10]] (NOT [[p.9], [p.10]]).",
+        "STRONGLY PREFER quoting over plain page refs — quotes allow the reader to locate the exact passage on the page.",
+        "When quoting from the paper, use: [[quote:\"exact text from paper\" p.{page_number}]]",
+        "Even if the quote is not the full context of your point, include a short exact excerpt so the reader can find it. Examples:",
         '- "The authors describe their BLE implementation [[p.5]]"',
         '- [[quote:"We deployed 12 sensor nodes across the hillside over a 6-month period" p.3]]',
         '- The evaluation methodology [[quote:"used a controlled lab environment with 5 participants" p.7]] suggests limited ecological validity.',
@@ -563,6 +566,15 @@ def api_llm_models():
     })
 
 
+@app.route("/api/papers/<int:doc_id>/prompt-size")
+def api_prompt_size(doc_id):
+    """Estimate token count of the system prompt for a paper."""
+    with db.connect() as conn:
+        prompt = _build_system_prompt(conn, doc_id)
+        estimated_tokens = len(prompt) // 4
+        return jsonify({"estimated_tokens": estimated_tokens})
+
+
 @app.route("/api/papers/<int:doc_id>/chat", methods=["POST"])
 def api_chat(doc_id):
     """Send a message and stream LLM response via SSE."""
@@ -590,9 +602,12 @@ def api_chat(doc_id):
             params_json = json.dumps(params) if params else None
             chat_model = model if provider == "ollama" else "claude"
             prompt_summary = _build_prompt_summary(conn, doc_id)
+            existing = db.get_chats(conn, doc_id)
+            chat_title = f"{doc_id}-{len(existing) + 1}"
             chat = db.create_chat(
-                conn, doc_id, provider=provider, model=chat_model,
-                params=params_json, system_prompt=prompt_summary,
+                conn, doc_id, title=chat_title, provider=provider,
+                model=chat_model, params=params_json,
+                system_prompt=prompt_summary,
             )
             chat_id = chat["id"]
 
@@ -620,9 +635,13 @@ def api_chat(doc_id):
                 yield f"data: {json.dumps({'type': 'error', 'error': f'Unknown provider: {provider}'})}\n\n"
                 return
 
-            for text in stream:
-                full_response += text
-                yield f"data: {json.dumps({'type': 'text', 'text': text})}\n\n"
+            for chunk in stream:
+                if isinstance(chunk, dict):
+                    # Metrics from Ollama final chunk
+                    yield f"data: {json.dumps({'type': 'metrics', **chunk})}\n\n"
+                else:
+                    full_response += chunk
+                    yield f"data: {json.dumps({'type': 'text', 'text': chunk})}\n\n"
 
             with db.connect() as conn:
                 db.save_message(conn, chat_id, "assistant", full_response)

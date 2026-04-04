@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { marked } from 'marked'
 import { api } from '@/api'
 import { useUiStore } from './ui'
 
@@ -17,13 +18,18 @@ export const useChatStore = defineStore('chat', () => {
   const params = ref({
     num_ctx: 32768,
     num_predict: 2048,
-    temperature: 0.6,
+    temperature: 0.0,
     top_k: 20,
     top_p: 0.95,
     presence_penalty: 1.5,
   })
 
+  // Metrics for the current/last generation (Ollama only)
+  const metrics = ref(null)
+  const promptTokenEstimate = ref(null)
   let abortController = null
+  let sendTimestamp = null
+  let firstTokenTimestamp = null
 
   const activeMessages = computed(() => messages.value)
 
@@ -52,6 +58,11 @@ export const useChatStore = defineStore('chat', () => {
     if (!chatId.value && chatList.value.length > 0) {
       await loadMessages(chatList.value[0].id)
     }
+    // Load prompt size estimate for this paper
+    try {
+      const data = await api.promptSize(paperId)
+      promptTokenEstimate.value = data.estimated_tokens
+    } catch { promptTokenEstimate.value = null }
   }
 
   async function loadMessages(id) {
@@ -92,6 +103,9 @@ export const useChatStore = defineStore('chat', () => {
     messages.value.push({ role: 'user', content: message, id: Date.now() })
     loading.value = true
     streamContent.value = ''
+    metrics.value = null
+    sendTimestamp = performance.now()
+    firstTokenTimestamp = null
 
     abortController = new AbortController()
 
@@ -126,7 +140,23 @@ export const useChatStore = defineStore('chat', () => {
           if (data.type === 'chat_id') {
             chatId.value = data.chat_id
           } else if (data.type === 'text') {
+            if (!firstTokenTimestamp) firstTokenTimestamp = performance.now()
             streamContent.value += data.text
+          } else if (data.type === 'metrics') {
+            // Ollama metrics from final chunk
+            const m = {}
+            m.ttft = firstTokenTimestamp ? ((firstTokenTimestamp - sendTimestamp) / 1000).toFixed(1) : null
+            if (data.prompt_eval_count) {
+              m.contextTokens = data.prompt_eval_count
+              const numCtx = params.value.num_ctx || 32768
+              m.contextPct = Math.round((data.prompt_eval_count / numCtx) * 100)
+            }
+            if (data.eval_count) m.outputTokens = data.eval_count
+            if (data.eval_count && data.eval_duration) {
+              m.tokPerSec = (data.eval_count / (data.eval_duration / 1e9)).toFixed(1)
+            }
+            if (data.total_duration) m.totalTime = (data.total_duration / 1e9).toFixed(1)
+            metrics.value = m
           } else if (data.type === 'done') {
             messages.value.push({
               role: 'assistant',
@@ -156,46 +186,53 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function renderChatContent(content) {
-    // Parse quote/page links BEFORE escaping so we work with raw text
-    // Replace [[quote:"..." p.N]] with placeholder tokens, then escape, then restore
+    // Extract quote/page links BEFORE markdown parsing so they don't get mangled
     const quotes = []
     let processed = content.replace(/\[\[quote:"([\s\S]*?)"\s+p\.(\d+)\]\]/g, (match, text, page) => {
       const idx = quotes.length
       quotes.push({ text: text.replace(/\n/g, ' ').trim(), page })
-      return `%%QUOTE_${idx}%%`
+      return `XQUOTE${idx}X`
     })
     const pageRefs = []
-    processed = processed.replace(/\[\[p\.(\d+)\]\]/g, (match, page) => {
+    // Handle [[p.9], [p.10]] grouped refs — split into individual badges
+    processed = processed.replace(/\[\[p\.([\d.]+)(?:\],\s*\[p\.([\d.]+))*\]\]/g, (match) => {
+      const pages = [...match.matchAll(/p\.([\d.]+)/g)]
+      return pages.map(m => {
+        const page = m[1].split('.')[0] // use integer part only
+        const idx = pageRefs.length
+        pageRefs.push(page)
+        return `XPAGE${idx}X`
+      }).join(' ')
+    })
+    // Handle individual [[p.N]] or [[p.N.N]] refs
+    processed = processed.replace(/\[\[p\.([\d.]+)\]\]/g, (match, pageStr) => {
+      const page = pageStr.split('.')[0] // use integer part only
       const idx = pageRefs.length
       pageRefs.push(page)
-      return `%%PAGE_${idx}%%`
+      return `XPAGE${idx}X`
     })
 
-    let html = escapeHtml(processed)
+    // Parse markdown (marked escapes HTML by default)
+    let html = marked.parse(processed, { breaks: true })
 
     // Restore quote placeholders
     for (let i = 0; i < quotes.length; i++) {
       const q = quotes[i]
       const escaped = escapeHtml(q.text)
-      html = html.replace(`%%QUOTE_${i}%%`,
+      html = html.replace(`XQUOTE${i}X`,
         `<div class="chat-quote cursor-pointer" data-page="${q.page}" data-quote="${escaped}"><span class="italic">&ldquo;${escaped}&rdquo;</span> <span class="badge badge-xs badge-primary">p.${q.page}</span></div>`)
     }
     // Restore page ref placeholders
     for (let i = 0; i < pageRefs.length; i++) {
-      html = html.replace(`%%PAGE_${i}%%`,
+      html = html.replace(`XPAGE${i}X`,
         `<button class="badge badge-xs badge-primary cursor-pointer mx-0.5" data-scroll-page="${pageRefs[i]}">p.${pageRefs[i]}</button>`)
     }
-    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="bg-base-300 rounded p-2 text-xs my-1 overflow-x-auto"><code>$2</code></pre>')
-    html = html.replace(/`([^`]+)`/g, '<code class="bg-base-300 rounded px-1 text-xs">$1</code>')
-    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>')
-    html = html.replace(/\n/g, '<br>')
     return html
   }
 
   return {
     chatList, chatId, messages, input, loading, streamContent,
-    provider, model, llmModels, showParams, params,
+    provider, model, llmModels, showParams, params, metrics, promptTokenEstimate,
     activeMessages,
     abort, loadModels, loadChats, loadMessages,
     newChat, deleteChat, sendMessage, renderChatContent,

@@ -209,9 +209,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const ui = useUiStore()
     await api.annotations.create(activePaperId.value, data)
     await loadAnnotations()
-    // Select the newest annotation
+    // Select the newest annotation (highest id, not last in page-sorted array)
     if (annotations.value.length > 0) {
-      const newest = annotations.value[annotations.value.length - 1]
+      const newest = annotations.value.reduce((a, b) => a.id > b.id ? a : b)
       ui.rightTab = 'annotations'
       activeAnnotationId.value = newest.id
     }

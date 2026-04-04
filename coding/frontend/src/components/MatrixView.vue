@@ -134,6 +134,14 @@ function toggleCellMulti(paperId, colId, optValue) {
                     <span>{{ opt.value }}</span>
                   </label>
                 </div>
+                <!-- checkbox -->
+                <input
+                  v-else-if="col.column_type === 'checkbox'"
+                  type="checkbox"
+                  class="checkbox checkbox-xs"
+                  :checked="matrix.matrixData.cells[paper.id]?.[col.id]?.value === 'true'"
+                  @change="saveCell(paper.id, col.id, $event.target.checked ? 'true' : 'false')"
+                >
                 <!-- text -->
                 <input
                   v-else

@@ -160,12 +160,32 @@ export const useMatrixStore = defineStore('matrix', () => {
     await loadColumns()
   }
 
+  async function reorderColumn(colId, direction) {
+    const cols = matrixColumns.value
+    const idx = cols.findIndex(c => c.id === colId)
+    const swapIdx = idx + direction
+    if (swapIdx < 0 || swapIdx >= cols.length) return
+    await Promise.all([
+      api.matrixColumns.update(cols[idx].id, { sort_order: swapIdx }),
+      api.matrixColumns.update(cols[swapIdx].id, { sort_order: idx }),
+    ])
+    await loadColumns()
+  }
+
+  async function shuffleColors() {
+    const updates = matrixColumns.value.map(col =>
+      api.matrixColumns.update(col.id, { color: randomColor() })
+    )
+    await Promise.all(updates)
+    await loadColumns()
+  }
+
   return {
     matrixColumns, matrixData, matrixStatusFilter, paperMatrixCells, codingCompleteness,
     newColumnName, newColumnType, newOptionValues,
     loadColumns, loadMatrixData, loadPaperCells, loadCompleteness,
     saveMatrixCell, savePaperMatrixCell, toggleMultiValue, parseMultiValue,
-    createColumn, updateColumn, deleteColumn,
+    createColumn, updateColumn, deleteColumn, reorderColumn, shuffleColors,
     addOption, updateOption, reorderOption, deleteOption, linkCode, unlinkCode,
   }
 })

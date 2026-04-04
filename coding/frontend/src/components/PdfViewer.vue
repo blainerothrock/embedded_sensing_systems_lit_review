@@ -135,23 +135,9 @@ function onToolbarKeydown(e) {
   }
 }
 
-// Watch for paper selection changes
-// Use activePaperId (set synchronously) + wait for activePaper (set async)
-let currentlyLoadingId = null
-watch(() => workspace.activePaperId, async (id) => {
-  if (!id) return
-  currentlyLoadingId = id
-  // Wait for the async paper data to arrive
-  // activePaper is set after the API call in selectPaper()
-  let attempts = 0
-  while (workspace.activePaper?.id !== id && attempts < 20) {
-    await new Promise(r => setTimeout(r, 50))
-    attempts++
-  }
-  // Bail if another paper was selected while we waited
-  if (currentlyLoadingId !== id) return
-  const paper = workspace.activePaper
-  if (!paper || paper.id !== id) return
+// Watch for paper changes (watches the object so re-fetch after upload triggers it)
+watch(() => workspace.activePaper, async (paper) => {
+  if (!paper) return
   await nextTick()
   if (!pdfPages.value) return
   if (paper.pdf_path) {

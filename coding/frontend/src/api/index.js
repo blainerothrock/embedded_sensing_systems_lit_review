@@ -121,4 +121,5 @@ export const api = {
 
   // LLM
   llmModels: () => get('/api/llm/models'),
+  promptSize: (paperId) => get(`/api/papers/${paperId}/prompt-size`),
 }
