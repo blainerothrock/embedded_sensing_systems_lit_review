@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { marked } from 'marked'
 import { api } from '@/api'
 import { useUiStore } from './ui'
@@ -13,7 +13,7 @@ export const useChatStore = defineStore('chat', () => {
   const streamContent = ref('')
   const provider = ref('ollama')
   const model = ref('')
-  const llmModels = ref({ ollama: [], claude: true })
+  const llmModels = ref({ ollama: [], claude: true, vllm: [] })
   const showParams = ref(false)
   const params = ref({
     num_ctx: 32768,
@@ -24,7 +24,9 @@ export const useChatStore = defineStore('chat', () => {
     presence_penalty: 1.5,
   })
 
-  // Metrics for the current/last generation (Ollama only)
+  const gpuServerStatus = ref({ vllm: 'off' })
+
+  // Metrics for the current/last generation (Ollama/vLLM)
   const metrics = ref(null)
   const promptTokenEstimate = ref(null)
   let abortController = null
@@ -44,14 +46,34 @@ export const useChatStore = defineStore('chat', () => {
 
   async function loadModels() {
     const data = await api.llmModels()
-    llmModels.value = { ollama: data.ollama || [], claude: data.claude }
+    llmModels.value = {
+      ollama: data.ollama || [],
+      claude: data.claude,
+      vllm: data.vllm?.models || [],
+    }
+    if (data.vllm) gpuServerStatus.value = data.vllm
     if (data.default_params) {
       params.value = { ...params.value, ...data.default_params }
     }
-    if (!model.value && llmModels.value.ollama.length > 0) {
-      model.value = llmModels.value.ollama[0]
+    if (!model.value) {
+      _setDefaultModel()
     }
   }
+
+  function _setDefaultModel() {
+    if (provider.value === 'ollama' && llmModels.value.ollama.length > 0) {
+      model.value = llmModels.value.ollama[0]
+    } else if (provider.value === 'vllm' && llmModels.value.vllm.length > 0) {
+      model.value = llmModels.value.vllm[0]
+    } else if (provider.value === 'claude') {
+      model.value = 'claude'
+    }
+  }
+
+  // Auto-set model when provider changes
+  watch(provider, () => {
+    _setDefaultModel()
+  })
 
   async function loadChats(paperId) {
     chatList.value = await api.chat.list(paperId)
@@ -118,7 +140,7 @@ export const useChatStore = defineStore('chat', () => {
           chat_id: chatId.value,
           provider: provider.value,
           model: model.value,
-          params: provider.value === 'ollama' ? params.value : null,
+          params: (provider.value === 'ollama' || provider.value === 'vllm') ? params.value : null,
         }),
         signal: abortController.signal,
       })
@@ -188,9 +210,26 @@ export const useChatStore = defineStore('chat', () => {
   function renderChatContent(content) {
     // Extract quote/page links BEFORE markdown parsing so they don't get mangled
     const quotes = []
+    // Format 1: [[quote:"text" p.N]]
     let processed = content.replace(/\[\[quote:"([\s\S]*?)"\s+p\.(\d+)\]\]/g, (match, text, page) => {
       const idx = quotes.length
       quotes.push({ text: text.replace(/\n/g, ' ').trim(), page })
+      return `XQUOTE${idx}X`
+    })
+    // Format 2: Markdown blockquote with quoted text and [[p.N]] — e.g.:
+    //   > "some text" [[p.14]]
+    //   > "some text..." [[p.14]]
+    processed = processed.replace(/^>\s*[""\u201c]([\s\S]*?)[""\u201d]\.?\s*\[\[p\.(\d+)\]\]\s*$/gm, (match, text, page) => {
+      const idx = quotes.length
+      quotes.push({ text: text.replace(/\n>\s*/g, ' ').replace(/\n/g, ' ').trim(), page })
+      return `XQUOTE${idx}X`
+    })
+    // Format 3: Inline quoted text followed by [[p.N]] — e.g.:
+    //   "some text" [[p.14]]
+    //   "some text" [[p.2], [p.15]]
+    processed = processed.replace(/[""\u201c]([^"""\u201c\u201d\n]{15,}?)[""\u201d]\s*\[\[p\.(\d+)(?:\](?:,\s*\[p\.\d+))*\]\]/g, (match, text, page) => {
+      const idx = quotes.length
+      quotes.push({ text: text.trim(), page })
       return `XQUOTE${idx}X`
     })
     const pageRefs = []
@@ -220,7 +259,7 @@ export const useChatStore = defineStore('chat', () => {
       const q = quotes[i]
       const escaped = escapeHtml(q.text)
       html = html.replace(`XQUOTE${i}X`,
-        `<div class="chat-quote cursor-pointer" data-page="${q.page}" data-quote="${escaped}"><span class="italic">&ldquo;${escaped}&rdquo;</span> <span class="badge badge-xs badge-primary">p.${q.page}</span></div>`)
+        `<span class="chat-quote cursor-pointer inline-block w-full" data-page="${q.page}" data-quote="${escaped}"><span class="italic">&ldquo;${escaped}&rdquo;</span> <span class="badge badge-xs badge-primary">p.${q.page}</span></span>`)
     }
     // Restore page ref placeholders
     for (let i = 0; i < pageRefs.length; i++) {
@@ -233,7 +272,7 @@ export const useChatStore = defineStore('chat', () => {
   return {
     chatList, chatId, messages, input, loading, streamContent,
     provider, model, llmModels, showParams, params, metrics, promptTokenEstimate,
-    activeMessages,
+    gpuServerStatus, activeMessages,
     abort, loadModels, loadChats, loadMessages,
     newChat, deleteChat, sendMessage, renderChatContent,
   }

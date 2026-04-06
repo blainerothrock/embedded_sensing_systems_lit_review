@@ -1,0 +1,21 @@
+{
+  "droplet_name": "blaine-dissertation-coding",
+  "region": "tor1",
+  "size": "gpu-6000adax1-48gb",
+  "base_image": "digitaloceanai-1clickinferencer",
+  "snapshot_id": "223544430",
+  "ssh_keys": [
+    39849126,
+    55416854
+  ],
+  "vpc_uuid": "5ae69fb3-b19f-4f41-adc0-e822347df0f5",
+  "tags": [
+    "dissertation",
+    "gpu"
+  ],
+  "droplet_id": null,
+  "firewall_id": "5feb8a16-a2b3-417b-8791-3faad80a84f4",
+  "vllm_port": 8000,
+  "vllm_host": "dissertation-gpu",
+  "served_model_name": "qwen3.5-35b-a3b"
+}

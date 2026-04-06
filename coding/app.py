@@ -559,9 +559,14 @@ def api_delete_chat(chat_id):
 def api_llm_models():
     """Get available LLM providers and models."""
     ollama_models = llm_providers.get_ollama_models()
+    try:
+        vllm_status = llm_providers.get_vllm_status()
+    except Exception:
+        vllm_status = {"vllm": "off"}
     return jsonify({
         "ollama": ollama_models,
         "claude": True,  # always available if CLI is installed
+        "vllm": vllm_status,
         "default_params": llm_providers.DEFAULT_OLLAMA_PARAMS,
     })
 
@@ -600,7 +605,7 @@ def api_chat(doc_id):
                 params = json.loads(chat["params"])
         else:
             params_json = json.dumps(params) if params else None
-            chat_model = model if provider == "ollama" else "claude"
+            chat_model = model if provider in ("ollama", "vllm") else "claude"
             prompt_summary = _build_prompt_summary(conn, doc_id)
             existing = db.get_chats(conn, doc_id)
             chat_title = f"{doc_id}-{len(existing) + 1}"
@@ -631,6 +636,8 @@ def api_chat(doc_id):
                 stream = llm_providers.stream_ollama(model, system_prompt, messages, params)
             elif provider == "claude":
                 stream = llm_providers.stream_claude(system_prompt, messages)
+            elif provider == "vllm":
+                stream = llm_providers.stream_vllm(model, system_prompt, messages, params)
             else:
                 yield f"data: {json.dumps({'type': 'error', 'error': f'Unknown provider: {provider}'})}\n\n"
                 return

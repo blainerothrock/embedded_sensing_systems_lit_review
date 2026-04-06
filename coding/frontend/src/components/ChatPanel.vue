@@ -52,7 +52,25 @@ async function deleteCurrentChat() {
 }
 
 function onMessagesClick(e) {
-  // Handle page scroll links
+  // Handle quote links first (before page scroll, since quotes contain page badges too)
+  const quoteEl = e.target.closest('.chat-quote[data-quote]')
+  if (quoteEl) {
+    const page = parseInt(quoteEl.dataset.page)
+    const quoteText = quoteEl.dataset.quote
+    if (page) {
+      const pageDiv = document.querySelector(`.pdf-page[data-page="${page}"]`)
+      if (pageDiv) {
+        // Scroll to the page first, then search for text after a short delay
+        // (text layer may not be rendered until the page is visible)
+        pageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        if (quoteText) {
+          setTimeout(() => highlightQuoteOnPage(pageDiv, quoteText), 500)
+        }
+      }
+    }
+    return
+  }
+  // Handle page scroll links (standalone page badges)
   const scrollBtn = e.target.closest('[data-scroll-page]')
   if (scrollBtn) {
     const page = parseInt(scrollBtn.dataset.scrollPage)
@@ -62,33 +80,45 @@ function onMessagesClick(e) {
     }
     return
   }
-  // Handle quote links — scroll to page and briefly highlight
-  const quoteEl = e.target.closest('[data-page][data-quote]')
-  if (quoteEl) {
-    const page = parseInt(quoteEl.dataset.page)
-    const quoteText = quoteEl.dataset.quote
-    if (page) {
-      const pageDiv = document.querySelector(`.pdf-page[data-page="${page}"]`)
-      if (pageDiv) {
-        pageDiv.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        // Brief highlight overlay on the page
-        if (quoteText) {
-          const overlay = pageDiv.querySelector('.pdf-annotation-layer')
-          if (overlay) {
-            const hl = document.createElement('div')
-            hl.className = 'chat-text-highlight'
-            hl.style.left = '5%'
-            hl.style.top = '5%'
-            hl.style.width = '90%'
-            hl.style.height = '90%'
-            hl.style.opacity = '0.3'
-            overlay.appendChild(hl)
-            setTimeout(() => hl.remove(), 1500)
-          }
-        }
+}
+
+function highlightQuoteOnPage(pageDiv, quoteText) {
+  // Simple approach: extract short word sequences from the quote and find
+  // spans that contain them. Highlight only those matching spans.
+  // This handles LLM imprecision (truncation, paraphrasing) gracefully.
+  const spans = pageDiv.querySelectorAll('.textLayer span')
+  if (!spans.length) return
+
+  const clean = (s) => s.toLowerCase().replace(/[""''…\u00ad]/g, '').replace(/\.\.\./g, '').replace(/\s+/g, ' ').trim()
+  const words = clean(quoteText).split(/\s+/).filter(w => w.length >= 3)
+  if (!words.length) return
+
+  // Generate 4-6 word search fragments — long enough to be distinctive,
+  // short enough to fit within a single PDF span
+  const fragments = new Set()
+  for (let size = 6; size >= 4; size--) {
+    for (let i = 0; i <= words.length - size; i++) {
+      fragments.add(words.slice(i, i + size).join(' '))
+    }
+  }
+
+  // Find spans matching any fragment
+  const matched = new Set()
+  for (const span of spans) {
+    const text = clean(span.textContent)
+    for (const frag of fragments) {
+      if (text.includes(frag)) {
+        matched.add(span)
+        break
       }
     }
-    return
+  }
+
+  if (matched.size > 0) {
+    const arr = Array.from(matched)
+    arr[0].scrollIntoView({ behavior: 'smooth', block: 'center' })
+    arr.forEach(s => s.classList.add('pdf-search-match'))
+    setTimeout(() => arr.forEach(s => s.classList.remove('pdf-search-match')), 4000)
   }
 }
 
@@ -108,12 +138,27 @@ function handleKeydown(e) {
         <select class="select select-xs flex-1" v-model="chat.provider">
           <option value="ollama">Ollama</option>
           <option value="claude">Claude</option>
+          <option value="vllm">vLLM (GPU)</option>
         </select>
+        <!-- vLLM status indicator -->
+        <span v-if="chat.provider === 'vllm'" class="flex items-center gap-1 text-[10px] opacity-60 shrink-0">
+          <span class="w-1.5 h-1.5 rounded-full"
+            :class="{
+              'bg-success': chat.gpuServerStatus.vllm === 'ready',
+              'bg-warning animate-pulse': chat.gpuServerStatus.vllm === 'loading',
+              'bg-error': chat.gpuServerStatus.vllm === 'off',
+            }"
+          ></span>
+          {{ chat.gpuServerStatus.vllm === 'ready' ? 'Ready' : chat.gpuServerStatus.vllm === 'loading' ? 'Loading...' : 'Off' }}
+        </span>
         <select v-if="chat.provider === 'ollama'" class="select select-xs flex-1" v-model="chat.model">
           <option v-for="m in chat.llmModels.ollama" :key="m" :value="m">{{ m }}</option>
         </select>
+        <select v-if="chat.provider === 'vllm' && chat.llmModels.vllm?.length" class="select select-xs flex-1" v-model="chat.model">
+          <option v-for="m in chat.llmModels.vllm" :key="m" :value="m">{{ m }}</option>
+        </select>
         <button
-          v-if="chat.provider === 'ollama'"
+          v-if="chat.provider === 'ollama' || chat.provider === 'vllm'"
           class="btn btn-ghost btn-xs btn-square opacity-50"
           :class="{ 'btn-active': chat.showParams }"
           @click="chat.showParams = !chat.showParams"
@@ -128,7 +173,7 @@ function handleKeydown(e) {
         </button>
       </div>
       <!-- Params (expandable) -->
-      <div v-if="chat.showParams && chat.provider === 'ollama'" class="grid grid-cols-2 gap-1.5">
+      <div v-if="chat.showParams && (chat.provider === 'ollama' || chat.provider === 'vllm')" class="grid grid-cols-2 gap-1.5">
         <template v-for="(val, key) in chat.params" :key="key">
           <label v-if="key === 'num_ctx' || key === 'num_predict'" class="flex flex-col">
             <span class="text-xs opacity-40">{{ key }}</span>
@@ -175,7 +220,7 @@ function handleKeydown(e) {
         </button>
       </div>
       <!-- Prompt size estimate -->
-      <div v-if="chat.promptTokenEstimate && chat.provider === 'ollama'" class="text-[10px] opacity-40">
+      <div v-if="chat.promptTokenEstimate && (chat.provider === 'ollama' || chat.provider === 'vllm')" class="text-[10px] opacity-40">
         prompt ~{{ chat.promptTokenEstimate.toLocaleString() }} tokens ({{ Math.round((chat.promptTokenEstimate / chat.params.num_ctx) * 100) }}% of {{ chat.params.num_ctx.toLocaleString() }} ctx)
       </div>
     </div>
@@ -198,7 +243,7 @@ function handleKeydown(e) {
         <span class="loading loading-dots loading-xs"></span>
       </div>
       <!-- Ollama generation metrics -->
-      <div v-if="chat.metrics && chat.provider === 'ollama'" class="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] opacity-40 px-1">
+      <div v-if="chat.metrics && (chat.provider === 'ollama' || chat.provider === 'vllm')" class="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] opacity-40 px-1">
         <span v-if="chat.metrics.ttft">TTFT {{ chat.metrics.ttft }}s</span>
         <span v-if="chat.metrics.tokPerSec">{{ chat.metrics.tokPerSec }} tok/s</span>
         <span v-if="chat.metrics.outputTokens">{{ chat.metrics.outputTokens }} tokens</span>
@@ -220,7 +265,7 @@ function handleKeydown(e) {
         <button
           class="btn btn-primary btn-xs btn-square"
           @click="send()"
-          :disabled="chat.loading || !chat.input.trim()"
+          :disabled="chat.loading || !chat.input.trim() || (chat.provider === 'vllm' && chat.gpuServerStatus.vllm !== 'ready')"
         >
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
             <path d="m22 2-11 20-4-9-9-4z"/>

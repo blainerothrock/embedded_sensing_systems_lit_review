@@ -60,38 +60,34 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const rects = JSON.parse(ann.rects_json || '[]')
     const isArea = ann.annotation_type === 'area'
 
-    if (isArea) {
-      const pageGroups = {}
-      for (const r of rects) {
-        const page = r.page || ann.page_number
-        if (!pageGroups[page]) pageGroups[page] = []
-        pageGroups[page].push(r)
-      }
-      return Object.entries(pageGroups)
-        .sort((a, b) => a[0] - b[0])
-        .map(([page]) => ({ page: parseInt(page), type: 'area', text: null }))
-    }
-
-    const texts = (ann.selected_text || '').split(' ... ').filter(t => t.trim())
-    if (texts.length <= 1) {
-      return [{
-        page: rects[0]?.page || ann.page_number,
-        type: 'text',
-        text: ann.selected_text,
-      }]
-    }
-    const pageGroups = {}
+    // Group rects by region index. Rects without `region` are legacy —
+    // fall back to grouping by page (one group per unique page).
+    const hasRegionField = rects.some(r => r.region != null)
+    const groups = {}
+    const groupOrder = []
     for (const r of rects) {
-      const page = r.page || ann.page_number
-      if (!pageGroups[page]) pageGroups[page] = []
-      pageGroups[page].push(r)
+      const key = hasRegionField
+        ? (r.region ?? 0)
+        : (r.page || ann.page_number)
+      if (!groups[key]) { groups[key] = []; groupOrder.push(key) }
+      groups[key].push(r)
     }
-    const pages = Object.keys(pageGroups).sort((a, b) => a - b)
-    return texts.map((text, i) => ({
-      page: parseInt(pages[Math.min(i, pages.length - 1)]) || ann.page_number,
-      type: 'text',
-      text: text.trim(),
-    }))
+    if (hasRegionField) groupOrder.sort((a, b) => a - b)
+    else groupOrder.sort((a, b) => a - b) // legacy: sort by page
+
+    const texts = (ann.selected_text || '').split(' ... ').map(t => t.trim())
+
+    return groupOrder.map((key, i) => {
+      const groupRects = groups[key]
+      const page = groupRects[0]?.page || ann.page_number
+      const text = isArea ? null : (texts[i] || null)
+      return {
+        page,
+        type: isArea ? 'area' : (text ? 'text' : 'area'),
+        text,
+        groupKey: key,
+      }
+    })
   })
 
   // Actions
@@ -258,12 +254,40 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const ann = annotations.value.find(a => a.id === annId)
     if (!ann) return
     const existingRects = JSON.parse(ann.rects_json || '[]')
-    const taggedNewRects = newRects.map(r => ({ ...r, page: pageNumber }))
-    const taggedExisting = existingRects.map(r => r.page ? r : { ...r, page: ann.page_number })
+    // Ensure existing rects have a region index (legacy rects: group by page)
+    const hasRegion = existingRects.some(r => r.region != null)
+    let taggedExisting
+    let nextRegion
+    if (hasRegion) {
+      taggedExisting = existingRects.map(r => ({
+        ...r,
+        page: r.page || ann.page_number,
+        region: r.region ?? 0,
+      }))
+      nextRegion = Math.max(...taggedExisting.map(r => r.region)) + 1
+    } else {
+      // Legacy: assign region indices by unique page in order
+      const pageToRegion = {}
+      const pageOrder = []
+      for (const r of existingRects) {
+        const page = r.page || ann.page_number
+        if (!(page in pageToRegion)) {
+          pageToRegion[page] = pageOrder.length
+          pageOrder.push(page)
+        }
+      }
+      taggedExisting = existingRects.map(r => {
+        const page = r.page || ann.page_number
+        return { ...r, page, region: pageToRegion[page] }
+      })
+      nextRegion = pageOrder.length
+    }
+    const taggedNewRects = newRects.map(r => ({ ...r, page: pageNumber, region: nextRegion }))
     const mergedRects = [...taggedExisting, ...taggedNewRects]
-    const mergedText = ann.selected_text
+    // Append text segment (empty string for box regions keeps text-to-region alignment)
+    const mergedText = ann.selected_text != null
       ? ann.selected_text + ' ... ' + (newText || '')
-      : newText || ann.selected_text
+      : (newText || '')
     await api.annotations.update(annId, {
       rects_json: JSON.stringify(mergedRects),
       selected_text: mergedText,
@@ -276,50 +300,46 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   async function deleteRegion(regionIndex) {
     const ann = activeAnnotation.value
     if (!ann) return
-    const rects = JSON.parse(ann.rects_json || '[]')
-    const isArea = ann.annotation_type === 'area'
-
-    if (isArea) {
-      // Group rects by page, remove the group at regionIndex
-      const pageGroups = {}
-      const pageOrder = []
-      for (const r of rects) {
-        const page = r.page || ann.page_number
-        if (!pageGroups[page]) { pageGroups[page] = []; pageOrder.push(page) }
-        pageGroups[page].push(r)
-      }
-      pageOrder.sort((a, b) => a - b)
-      const pageToRemove = pageOrder[regionIndex]
-      const newRects = rects.filter(r => (r.page || ann.page_number) !== pageToRemove)
-      if (newRects.length === 0) {
-        await deleteAnnotation(ann.id)
-        return
-      }
-      await updateAnnotation(ann.id, { rects_json: JSON.stringify(newRects) })
-    } else {
-      // Text: remove the regionIndex-th text segment and its rects
-      const texts = (ann.selected_text || '').split(' ... ').filter(t => t.trim())
-      const pageGroups = {}
-      const pageOrder = []
-      for (const r of rects) {
-        const page = r.page || ann.page_number
-        if (!pageGroups[page]) { pageGroups[page] = []; pageOrder.push(page) }
-        pageGroups[page].push(r)
-      }
-      pageOrder.sort((a, b) => a - b)
-
-      if (texts.length <= 1 || pageOrder.length <= 1) {
-        await deleteAnnotation(ann.id)
-        return
-      }
-      const pageToRemove = pageOrder[Math.min(regionIndex, pageOrder.length - 1)]
-      const newRects = rects.filter(r => (r.page || ann.page_number) !== pageToRemove)
-      texts.splice(regionIndex, 1)
-      await updateAnnotation(ann.id, {
-        rects_json: JSON.stringify(newRects),
-        selected_text: texts.join(' ... '),
-      })
+    const regions = annotationRegions.value
+    if (regionIndex < 0 || regionIndex >= regions.length) return
+    if (regions.length <= 1) {
+      await deleteAnnotation(ann.id)
+      return
     }
+    const keyToRemove = regions[regionIndex].groupKey
+    const rects = JSON.parse(ann.rects_json || '[]')
+    const hasRegion = rects.some(r => r.region != null)
+
+    let newRects
+    if (hasRegion) {
+      newRects = rects.filter(r => (r.region ?? 0) !== keyToRemove)
+      // Re-index remaining regions to be contiguous
+      const oldToNew = {}
+      let next = 0
+      for (const r of newRects) {
+        const old = r.region ?? 0
+        if (!(old in oldToNew)) { oldToNew[old] = next++ }
+      }
+      newRects = newRects.map(r => ({ ...r, region: oldToNew[r.region ?? 0] }))
+    } else {
+      // Legacy: groupKey is a page number
+      newRects = rects.filter(r => (r.page || ann.page_number) !== keyToRemove)
+    }
+
+    if (newRects.length === 0) {
+      await deleteAnnotation(ann.id)
+      return
+    }
+
+    // Update text segments to match remaining regions
+    const texts = (ann.selected_text || '').split(' ... ').map(t => t.trim())
+    texts.splice(regionIndex, 1)
+    const newText = texts.join(' ... ')
+
+    await updateAnnotation(ann.id, {
+      rects_json: JSON.stringify(newRects),
+      selected_text: newText,
+    })
   }
 
   function toggleAnnotationCode(codeId) {

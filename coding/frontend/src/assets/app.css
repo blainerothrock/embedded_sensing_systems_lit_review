@@ -155,6 +155,7 @@
 
 /* Chat quote blocks */
 .chat-quote {
+  display: block;
   border-left: 3px solid oklch(var(--p));
   padding: 0.25rem 0.5rem;
   margin: 0.25rem 0;
