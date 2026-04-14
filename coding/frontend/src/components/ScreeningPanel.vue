@@ -3,6 +3,11 @@ import { useWorkspaceStore } from '@/stores/workspace'
 import RichTextEditor from './RichTextEditor.vue'
 
 const workspace = useWorkspaceStore()
+
+function confirmDeletePdf() {
+  if (!confirm('Delete the PDF for this paper? Annotations will remain but the file will be removed.')) return
+  workspace.deletePdf()
+}
 </script>
 
 <template>
@@ -84,6 +89,11 @@ const workspace = useWorkspaceStore()
         Upload PDF
         <input type="file" accept=".pdf" class="hidden" @change="workspace.uploadPdf($event.target.files[0])">
       </label>
+    </div>
+    <div v-show="workspace.activePaper && workspace.activePaper.pdf_path" class="pt-2">
+      <button class="btn btn-sm btn-outline btn-error w-full gap-2" @click="confirmDeletePdf">
+        Delete PDF
+      </button>
     </div>
   </div>
 </template>

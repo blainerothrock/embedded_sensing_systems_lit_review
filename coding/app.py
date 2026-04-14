@@ -113,6 +113,19 @@ def api_serve_pdf(doc_id):
     return send_file(full_path, mimetype="application/pdf")
 
 
+@app.route("/api/papers/<int:doc_id>/pdf", methods=["DELETE"])
+def api_delete_pdf(doc_id):
+    with db.connect() as conn:
+        pdf_path = db.get_pdf_path(conn, doc_id)
+        if pdf_path is None:
+            return jsonify({"error": "No PDF"}), 404
+        db.delete_pdf_reference(conn, doc_id)
+    full_path = PDF_DIR / pdf_path
+    if full_path.exists():
+        full_path.unlink()
+    return jsonify({"success": True})
+
+
 # --- API: Phase 3 Review ---
 
 @app.route("/api/papers/<int:doc_id>/review", methods=["POST"])

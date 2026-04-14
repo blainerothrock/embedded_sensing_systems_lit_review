@@ -119,6 +119,141 @@ def get_tailscale_authkey() -> str:
     return key
 
 
+# --- GPU / Region Selection ---
+
+def get_available_gpus(client) -> list[dict]:
+    """Query DO API for GPU sizes that are currently available in at least one region."""
+    gpus = []
+    page = 1
+    while True:
+        resp = client.sizes.list(per_page=200, page=page)
+        sizes = resp.get("sizes", [])
+        if not sizes:
+            break
+        for s in sizes:
+            if "gpu" not in s.get("slug", "") or not s.get("available"):
+                continue
+            regions = s.get("regions", [])
+            if not regions:
+                continue
+            gpu_info = s.get("gpu_info", {})
+            vram = gpu_info.get("vram", {})
+            gpus.append({
+                "slug": s["slug"],
+                "price_hourly": s.get("price_hourly", 0),
+                "price_monthly": s.get("price_monthly", 0),
+                "regions": regions,
+                "gpu_model": gpu_info.get("model", "unknown"),
+                "gpu_count": gpu_info.get("count", 1),
+                "vram_gb": vram.get("amount", 0) if vram.get("unit") == "gib" else vram.get("amount", 0) / 1024 if vram.get("unit") == "mib" else vram.get("amount", 0),
+                "memory_mb": s.get("memory", 0),
+                "vcpus": s.get("vcpus", 0),
+            })
+        page += 1
+    gpus.sort(key=lambda g: g["price_hourly"])
+    return gpus
+
+
+def check_config_valid(client, config: dict) -> bool:
+    """Check if the configured size is available in the configured region."""
+    gpus = get_available_gpus(client)
+    for g in gpus:
+        if g["slug"] == config.get("size") and config.get("region") in g["regions"]:
+            return True
+    return False
+
+
+def select_gpu_interactively(client, gpus: list[dict] | None = None) -> tuple[str, str]:
+    """Show available GPU sizes and let the user pick one, then a region."""
+    if gpus is None:
+        gpus = get_available_gpus(client)
+
+    if not gpus:
+        print("Error: No GPU sizes available on DigitalOcean right now.")
+        sys.exit(1)
+
+    print("\nAvailable GPU configurations:")
+    print(f"  {'#':>3}  {'Size Slug':<40s} {'GPU':<20s} {'VRAM':>6s} {'$/hr':>7s}  Regions")
+    print(f"  {'—'*3}  {'—'*40} {'—'*20} {'—'*6} {'—'*7}  {'—'*20}")
+    for i, g in enumerate(gpus, 1):
+        vram = f"{g['vram_gb']:.0f}GB" if g["vram_gb"] else "?"
+        regions = ", ".join(sorted(g["regions"]))
+        gpu_label = f"{g['gpu_count']}x {g['gpu_model']}" if g["gpu_count"] > 1 else g["gpu_model"]
+        print(f"  {i:>3}  {g['slug']:<40s} {gpu_label:<20s} {vram:>6s} ${g['price_hourly']:>6.2f}  {regions}")
+
+    # Pick size
+    while True:
+        try:
+            choice = input(f"\nSelect GPU [1-{len(gpus)}]: ").strip()
+            idx = int(choice) - 1
+            if 0 <= idx < len(gpus):
+                selected = gpus[idx]
+                break
+        except (ValueError, EOFError):
+            pass
+        print("Invalid selection.")
+
+    # Pick region
+    regions = sorted(selected["regions"])
+    if len(regions) == 1:
+        region = regions[0]
+        print(f"Only one region available: {region}")
+    else:
+        print(f"\nAvailable regions for {selected['slug']}:")
+        for i, r in enumerate(regions, 1):
+            print(f"  {i:>3}  {r}")
+        while True:
+            try:
+                choice = input(f"Select region [1-{len(regions)}]: ").strip()
+                idx = int(choice) - 1
+                if 0 <= idx < len(regions):
+                    region = regions[idx]
+                    break
+            except (ValueError, EOFError):
+                pass
+            print("Invalid selection.")
+
+    print(f"\nSelected: {selected['slug']} in {region} (${selected['price_hourly']:.2f}/hr)")
+    return selected["slug"], region
+
+
+def ensure_vpc(client, config: dict, region: str) -> str | None:
+    """Find or create a VPC in the given region. Returns VPC UUID."""
+    # Check existing VPCs
+    resp = client.vpcs.list(per_page=200)
+    for vpc in resp.get("vpcs", []):
+        if vpc["region"] == region:
+            print(f"Using existing VPC '{vpc['name']}' ({vpc['id']}) in {region}")
+            return vpc["id"]
+
+    # Create new VPC
+    try:
+        resp = client.vpcs.create(body={
+            "name": f"dissertation-{region}",
+            "region": region,
+            "description": "Auto-created for GPU server",
+        })
+        vpc_id = resp["vpc"]["id"]
+        print(f"Created VPC 'dissertation-{region}' ({vpc_id}) in {region}")
+        return vpc_id
+    except Exception as e:
+        print(f"Warning: Could not create VPC in {region}: {e}")
+        return None
+
+
+def _get_snapshot_regions(client, image_id) -> list[str]:
+    """Look up which regions a snapshot/image is available in."""
+    try:
+        resp = client.images.get(image_id=image_id)
+        return resp.get("image", {}).get("regions", [])
+    except Exception:
+        try:
+            resp = client.snapshots.get(snapshot_id=str(image_id))
+            return resp.get("snapshot", {}).get("regions", [])
+        except Exception:
+            return []
+
+
 # --- Status ---
 
 def get_status() -> dict:
@@ -169,7 +304,7 @@ def check_vllm_health(config: dict) -> str:
 
 # --- Droplet Lifecycle ---
 
-def create_droplet(from_snapshot: bool = False) -> dict:
+def create_droplet(from_snapshot: bool = False, gpu_override: str | None = None, region_override: str | None = None) -> dict:
     """Create a GPU droplet. from_snapshot=True for daily use, False for first-time."""
     config = load_config()
     client = get_do_client()
@@ -178,6 +313,23 @@ def create_droplet(from_snapshot: bool = False) -> dict:
     if config.get("droplet_id"):
         print(f"Droplet already exists (id={config['droplet_id']}). Run 'stop' first.")
         sys.exit(1)
+
+    # --- Resolve GPU size and region ---
+    if gpu_override and region_override:
+        config["size"] = gpu_override
+        config["region"] = region_override
+        config["vpc_uuid"] = ensure_vpc(client, config, region_override) or ""
+        save_config(config)
+    else:
+        gpus = get_available_gpus(client)
+        if not check_config_valid(client, config):
+            print(f"⚠ Configured size '{config['size']}' is not available in '{config['region']}'.\n")
+        size_slug, region_slug = select_gpu_interactively(client, gpus)
+        if size_slug != config["size"] or region_slug != config["region"]:
+            config["size"] = size_slug
+            config["region"] = region_slug
+            config["vpc_uuid"] = ensure_vpc(client, config, region_slug) or ""
+            save_config(config)
 
     if from_snapshot:
         if not config.get("snapshot_id"):
@@ -201,11 +353,27 @@ def create_droplet(from_snapshot: bool = False) -> dict:
         "ipv6": False,
         "monitoring": True,
         "tags": config["tags"],
-        "vpc_uuid": config["vpc_uuid"],
         "user_data": user_data,
     }
+    if config.get("vpc_uuid"):
+        body["vpc_uuid"] = config["vpc_uuid"]
 
-    resp = client.droplets.create(body=body)
+    try:
+        resp = client.droplets.create(body=body)
+    except Exception as e:
+        err = str(e)
+        if "image" in err.lower() and "not available" in err.lower() and "region" in err.lower():
+            # Snapshot not in this region — check where it actually is
+            snap_regions = _get_snapshot_regions(client, image)
+            print(f"\nError: Snapshot {image} is not available in {config['region']}.")
+            if snap_regions:
+                print(f"  Snapshot is currently in: {', '.join(snap_regions)}")
+            print("  Transfer the snapshot to the target region in the DO console first.")
+            print(f"  https://cloud.digitalocean.com/images/snapshots/droplets")
+            sys.exit(1)
+        else:
+            print(f"\nError creating droplet: {e}")
+            sys.exit(1)
     droplet = resp["droplet"]
     droplet_id = droplet["id"]
     config["droplet_id"] = droplet_id
@@ -410,8 +578,12 @@ def main():
     parser = argparse.ArgumentParser(description="Manage GPU droplet for vLLM inference")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("create", help="Create droplet from base image (first time)")
-    sub.add_parser("start", help="Create droplet from snapshot (daily use)")
+    create_p = sub.add_parser("create", help="Create droplet from base image (first time)")
+    create_p.add_argument("--gpu", help="GPU size slug (e.g. gpu-h100x1-80gb)")
+    create_p.add_argument("--region", help="Region slug (e.g. ams3)")
+    start_p = sub.add_parser("start", help="Create droplet from snapshot (daily use)")
+    start_p.add_argument("--gpu", help="GPU size slug (e.g. gpu-h100x1-80gb)")
+    start_p.add_argument("--region", help="Region slug (e.g. ams3)")
     sub.add_parser("stop", help="Destroy running droplet")
     sub.add_parser("status", help="Show droplet and vLLM status")
     sub.add_parser("snapshot", help="Snapshot running droplet")
@@ -422,9 +594,9 @@ def main():
     args = parser.parse_args()
 
     if args.command == "create":
-        create_droplet(from_snapshot=False)
+        create_droplet(from_snapshot=False, gpu_override=args.gpu, region_override=args.region)
     elif args.command == "start":
-        create_droplet(from_snapshot=True)
+        create_droplet(from_snapshot=True, gpu_override=args.gpu, region_override=args.region)
     elif args.command == "stop":
         destroy_droplet()
     elif args.command == "status":

@@ -56,6 +56,7 @@ export const api = {
   pdf: {
     upload: (id, formData) => upload(`/api/papers/${id}/upload-pdf`, formData),
     url: (id) => `/api/papers/${id}/pdf`,
+    delete: (id) => del(`/api/papers/${id}/pdf`),
   },
 
   // Codes

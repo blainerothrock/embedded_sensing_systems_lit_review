@@ -432,6 +432,16 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
   }
 
+  async function deletePdf() {
+    const ui = useUiStore()
+    if (!activePaperId.value) return
+    await api.pdf.delete(activePaperId.value)
+    ui.showToast('PDF deleted', 'success')
+    await selectPaper(activePaperId.value)
+    await loadPapers()
+    await loadStats()
+  }
+
   return {
     // State
     papers, activePaperId, activePaper,
@@ -451,6 +461,6 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     saveAnnotationCodeNote, saveAnnotationNote,
     appendRegionToAnnotation, deleteRegion, toggleAnnotationCode,
     cancelAnnotation, confirmAnnotation, startAddRegion,
-    loadPaperSummary, loadPaperNote, savePaperNote, uploadPdf,
+    loadPaperSummary, loadPaperNote, savePaperNote, uploadPdf, deletePdf,
   }
 })

@@ -1,10 +1,22 @@
 <script setup>
 import { computed } from 'vue'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { useUiStore } from '@/stores/ui'
 import { useDebounce } from '@/composables/useDebounce'
 import PaperListItem from './PaperListItem.vue'
 
 const workspace = useWorkspaceStore()
+const ui = useUiStore()
+
+async function copyVisibleIds() {
+  const ids = workspace.papers.map(p => p.id).join(' ')
+  try {
+    await navigator.clipboard.writeText(ids)
+    ui.showToast(`Copied ${workspace.papers.length} IDs`, 'success')
+  } catch (e) {
+    ui.showToast('Copy failed', 'error')
+  }
+}
 
 const { debounced: searchPapers } = useDebounce(() => {
   workspace.loadPapers()
@@ -87,6 +99,12 @@ const filterChips = [
           <option value="id">ID</option>
         </select>
         <button class="btn btn-ghost btn-xs opacity-50" @click="workspace.shufflePapers()" title="Randomize order">Shuffle</button>
+        <button
+          class="btn btn-ghost btn-xs opacity-50"
+          @click="copyVisibleIds()"
+          :disabled="workspace.papers.length === 0"
+          title="Copy IDs of visible papers (space-separated)"
+        >Copy IDs</button>
       </div>
     </div>
     <div class="flex-1 overflow-y-auto">

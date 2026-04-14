@@ -118,6 +118,20 @@
   background: oklch(var(--p));
 }
 
+.resize-handle-h {
+  height: 4px;
+  cursor: row-resize;
+  background: transparent;
+  transition: background 0.15s;
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.resize-handle-h:hover,
+.resize-handle-h.active {
+  background: oklch(var(--p));
+}
+
 /* Prevent text selection while resizing */
 .resizing {
   cursor: col-resize !important;

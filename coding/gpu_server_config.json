@@ -1,14 +1,14 @@
 {
   "droplet_name": "blaine-dissertation-coding",
-  "region": "tor1",
-  "size": "gpu-6000adax1-48gb",
+  "region": "nyc2",
+  "size": "gpu-h200x1-141gb",
   "base_image": "digitaloceanai-1clickinferencer",
   "snapshot_id": "223544430",
   "ssh_keys": [
     39849126,
     55416854
   ],
-  "vpc_uuid": "5ae69fb3-b19f-4f41-adc0-e822347df0f5",
+  "vpc_uuid": "24fa44fe-f5d1-4489-a1ef-61271d6440f5",
   "tags": [
     "dissertation",
     "gpu"

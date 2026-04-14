@@ -23,6 +23,14 @@ export const useUiStore = defineStore('ui', () => {
   const rightWidth = ref(320)
   const resizing = ref(false)
 
+  // Chat panel (persistent bottom split)
+  const chatOpen = ref(true)
+  const chatHeight = ref(300)
+
+  function toggleChat() {
+    chatOpen.value = !chatOpen.value
+  }
+
   // PDF mode
   const pdfMode = ref('hand') // 'hand' | 'text' | 'box'
   const pdfScale = ref(1.5)
@@ -55,7 +63,7 @@ export const useUiStore = defineStore('ui', () => {
   }
 
   // Persistent settings keys
-  const SETTINGS_KEYS = ['theme', 'sidebarOpen', 'leftWidth', 'rightWidth', 'pdfMode', 'pdfScale', 'rightTab']
+  const SETTINGS_KEYS = ['theme', 'sidebarOpen', 'leftWidth', 'rightWidth', 'pdfMode', 'pdfScale', 'rightTab', 'chatOpen', 'chatHeight']
 
   function debouncedSave() {
     if (loading) return
@@ -63,7 +71,7 @@ export const useUiStore = defineStore('ui', () => {
     saveTimer = setTimeout(() => {
       const data = {}
       for (const key of SETTINGS_KEYS) {
-        const val = { theme, sidebarOpen, leftWidth, rightWidth, pdfMode, pdfScale, rightTab }[key]
+        const val = { theme, sidebarOpen, leftWidth, rightWidth, pdfMode, pdfScale, rightTab, chatOpen, chatHeight }[key]
         data[key] = String(val.value)
       }
       api.settings.save(data).catch(() => {})
@@ -72,7 +80,7 @@ export const useUiStore = defineStore('ui', () => {
 
   // Watch all persisted settings and debounce-save to backend
   for (const key of SETTINGS_KEYS) {
-    const val = { theme, sidebarOpen, leftWidth, rightWidth, pdfMode, pdfScale, rightTab }[key]
+    const val = { theme, sidebarOpen, leftWidth, rightWidth, pdfMode, pdfScale, rightTab, chatOpen, chatHeight }[key]
     watch(val, () => debouncedSave())
   }
 
@@ -90,6 +98,8 @@ export const useUiStore = defineStore('ui', () => {
         userSetZoom.value = true
       }
       if (settings.rightTab) rightTab.value = settings.rightTab
+      if (settings.chatOpen !== undefined) chatOpen.value = settings.chatOpen !== 'false'
+      if (settings.chatHeight) chatHeight.value = parseInt(settings.chatHeight) || 300
     } catch {
       // Settings not available yet, use defaults
     }
@@ -100,6 +110,7 @@ export const useUiStore = defineStore('ui', () => {
     view, rightTab,
     theme, toggleTheme,
     sidebarOpen, leftWidth, rightWidth, resizing,
+    chatOpen, chatHeight, toggleChat,
     pdfMode, pdfScale, userSetZoom, setPdfMode,
     showCodeManager, showColumnEditor,
     toasts, showToast,

@@ -152,6 +152,11 @@ def get_pdf_path(conn: sqlite3.Connection, document_id: int) -> str | None:
     return row["pdf_path"] if row else None
 
 
+def delete_pdf_reference(conn: sqlite3.Connection, document_id: int) -> None:
+    conn.execute("DELETE FROM document_pdf WHERE document_id = ?", (document_id,))
+    conn.commit()
+
+
 # --- Phase 3 screening ---
 
 
