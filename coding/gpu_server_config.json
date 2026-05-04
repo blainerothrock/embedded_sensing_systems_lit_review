@@ -1,7 +1,7 @@
 {
   "droplet_name": "blaine-dissertation-coding",
   "region": "nyc2",
-  "size": "gpu-h200x1-141gb",
+  "size": "gpu-h100x1-80gb",
   "base_image": "digitaloceanai-1clickinferencer",
   "snapshot_id": "223544430",
   "ssh_keys": [
